@@ -1,0 +1,21 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: youthfit-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-youthfit}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-youthfit}
+      POSTGRES_DB: ${POSTGRES_DB:-youthfit}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - youthfit_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-youthfit} -d ${POSTGRES_DB:-youthfit}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  youthfit_pgdata:

@@ -17,8 +17,9 @@ uv sync
 # 2) 환경 변수 준비
 Copy-Item .env.example .env
 
-# 3) PostgreSQL 기동
+# 3) PostgreSQL 기동 + 스키마 마이그레이션
 docker compose up -d
+uv run alembic upgrade head
 
 # 4) API 서버 실행
 uv run uvicorn app.main:app --reload
@@ -43,6 +44,8 @@ app/
   main.py          # FastAPI 앱 생성
   api/             # 라우터 (엔드포인트)
   core/            # 설정, DB 연결
+  models/          # SQLAlchemy ORM 모델
+alembic/           # DB 마이그레이션 (alembic.ini 는 ASCII 만 사용)
 tests/
 docs/              # 아키텍처, 기술 결정(ADR), 트러블슈팅 일지, 이력서용 기록
 compose.yaml       # 로컬 PostgreSQL

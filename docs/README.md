@@ -11,6 +11,7 @@ Cursor 규칙(`.cursor/rules/youthfit-docs.mdc`)에 따라 Agent가 작업 후 �
 | [journal/](journal/) | 트러블슈팅·실험·회고 (날짜별) | 버그 해결, 예상 밖 이슈, 측정 결과 |
 | [milestones/](milestones/) | 주차별 산출물 체크리스트 | 주차 시작/종료 |
 | [resume-bullets.md](resume-bullets.md) | 이력서·자소서용 STAR 문장 누적 | 의미 있는 성과/해결이 생길 때마다 |
+| [reference/](reference/) | 계획서·발표자료 정리본 (요구사항 원문) | 요구사항·일정 확인, 범위가 바뀔 때 |
 
 ## 작성 원칙
 

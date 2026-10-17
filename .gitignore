@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# Secrets / local
+.env
+.env.*
+!.env.example
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Data dumps (API 원본 응답은 docs/data-samples 에 마스킹본만 저장)
+/data/
+
+# 계획서·발표 원본 PDF (이름·학번 포함)
+docs/reference/originals/

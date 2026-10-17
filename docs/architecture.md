@@ -47,8 +47,23 @@ flowchart LR
 | `app/api/` | 라우터 (현재 `health`) |
 | `app/core/config.py` | `pydantic-settings` 기반 설정 |
 | `app/core/database.py` | SQLAlchemy async 엔진 (DATABASE_URL 있을 때만 생성) |
+| `app/models/` | ORM 모델: `Policy`, `FinancialCompany`, `SavingProduct`, `SavingProductOption`, `IngestRun` |
+| `alembic/` | 마이그레이션 (async 템플릿, URL은 `Settings`에서 읽음) |
 | `compose.yaml` | 로컬 PostgreSQL 16 |
+
+## 데이터 스키마
+
+정규화 컬럼 + 원문 `raw JSONB` 이중 저장 (근거: `decisions/002-schema-normalized-plus-raw.md`).
+
+| 테이블 | 키 | 내용 |
+|------|------|------|
+| `policies` | `plcy_no` | 온통청년 정책. 대·중분류(배열), 나이·혼인·소득·취업상태·학력·특화·지역 코드, 신청기간, URL. GIN: `categories`, `sido_codes`, `job_codes` |
+| `financial_companies` | `fin_co_no` | 금감원 금융회사. `homepage_url`을 적금 공식 URL로 사용 |
+| `saving_products` | `(fin_co_no, fin_prdt_cd)` | 금감원 적금 기본 정보, `is_youth` 플래그 (회사 FK 없음) |
+| `saving_product_options` | `id`, 유니크 `(상품, rate_type, reserve_type, term_months)` | 기간·적립방식별 기본/최고 금리 |
+| `ingest_runs` | `id` | 배치 실행 기록 (source, status, 건수, 오류) |
 
 ## 변경 이력
 
 - 2026-10-12: 초기 골격 작성
+- 2026-10-17: Alembic + 모델 5개, 첫 마이그레이션 추가

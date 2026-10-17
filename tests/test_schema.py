@@ -34,7 +34,7 @@ def test_policy_array_columns_have_gin_indexes():
     gin = {
         idx.name for idx in policies.indexes if idx.dialect_options["postgresql"]["using"] == "gin"
     }
-    assert gin == {"ix_policies_sido_codes", "ix_policies_job_codes"}
+    assert gin == {"ix_policies_categories", "ix_policies_sido_codes", "ix_policies_job_codes"}
 
 
 def test_alembic_has_single_head():

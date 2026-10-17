@@ -17,8 +17,11 @@ class Policy(IngestedAtMixin, Base):
     name: Mapped[str] = mapped_column(Text, nullable=False)
     keywords: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False, server_default="{}")
     description: Mapped[str | None] = mapped_column(Text)
-    category_l: Mapped[str | None] = mapped_column(String(50))
-    category_m: Mapped[str | None] = mapped_column(String(100))
+    # lclsfNm / mclsfNm 은 콤마로 여러 분류가 붙어 올 수 있다
+    categories: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False, server_default="{}")
+    subcategories: Mapped[list[str]] = mapped_column(
+        ARRAY(Text), nullable=False, server_default="{}"
+    )
     support_content: Mapped[str | None] = mapped_column(Text)
 
     min_age: Mapped[int | None] = mapped_column(Integer)
@@ -65,6 +68,7 @@ class Policy(IngestedAtMixin, Base):
     raw: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
 
     __table_args__ = (
+        Index("ix_policies_categories", "categories", postgresql_using="gin"),
         Index("ix_policies_sido_codes", "sido_codes", postgresql_using="gin"),
         Index("ix_policies_job_codes", "job_codes", postgresql_using="gin"),
         Index("ix_policies_apply_end", "apply_end"),

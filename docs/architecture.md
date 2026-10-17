@@ -57,7 +57,7 @@ flowchart LR
 
 | 테이블 | 키 | 내용 |
 |------|------|------|
-| `policies` | `plcy_no` | 온통청년 정책. 나이·혼인·소득·취업상태·학력·특화·지역 코드, 신청기간, URL. GIN: `sido_codes`, `job_codes` |
+| `policies` | `plcy_no` | 온통청년 정책. 대·중분류(배열), 나이·혼인·소득·취업상태·학력·특화·지역 코드, 신청기간, URL. GIN: `categories`, `sido_codes`, `job_codes` |
 | `financial_companies` | `fin_co_no` | 금감원 금융회사. `homepage_url`을 적금 공식 URL로 사용 |
 | `saving_products` | `(fin_co_no, fin_prdt_cd)` | 금감원 적금 기본 정보, `is_youth` 플래그 (회사 FK 없음) |
 | `saving_product_options` | `id`, 유니크 `(상품, rate_type, reserve_type, term_months)` | 기간·적립방식별 기본/최고 금리 |

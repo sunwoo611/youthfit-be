@@ -35,8 +35,18 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.Column("description", sa.Text(), nullable=True),
-        sa.Column("category_l", sa.String(length=50), nullable=True),
-        sa.Column("category_m", sa.String(length=100), nullable=True),
+        sa.Column(
+            "categories",
+            postgresql.ARRAY(sa.Text()),
+            server_default=_text_array_default(),
+            nullable=False,
+        ),
+        sa.Column(
+            "subcategories",
+            postgresql.ARRAY(sa.Text()),
+            server_default=_text_array_default(),
+            nullable=False,
+        ),
         sa.Column("support_content", sa.Text(), nullable=True),
         sa.Column("min_age", sa.Integer(), nullable=True),
         sa.Column("max_age", sa.Integer(), nullable=True),
@@ -108,6 +118,7 @@ def upgrade() -> None:
         ),
         sa.PrimaryKeyConstraint("plcy_no", name=op.f("pk_policies")),
     )
+    op.create_index("ix_policies_categories", "policies", ["categories"], postgresql_using="gin")
     op.create_index("ix_policies_sido_codes", "policies", ["sido_codes"], postgresql_using="gin")
     op.create_index("ix_policies_job_codes", "policies", ["job_codes"], postgresql_using="gin")
     op.create_index("ix_policies_apply_end", "policies", ["apply_end"])
@@ -214,4 +225,5 @@ def downgrade() -> None:
     op.drop_index("ix_policies_apply_end", table_name="policies")
     op.drop_index("ix_policies_job_codes", table_name="policies")
     op.drop_index("ix_policies_sido_codes", table_name="policies")
+    op.drop_index("ix_policies_categories", table_name="policies")
     op.drop_table("policies")

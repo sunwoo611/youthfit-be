@@ -15,6 +15,7 @@
 
 - 테이블 5개: `policies`, `financial_companies`, `saving_products`, `saving_product_options`, `ingest_runs`
 - 다중 코드(`job_codes`, `sido_codes`, `sigungu_codes` 등)는 `text[]` 배열로 두고, 필터에 쓰는 `sido_codes`·`job_codes`에 GIN 인덱스를 건다.
+- 정책 대·중분류(`lclsfNm`, `mclsfNm`)도 콤마로 여러 값이 올 수 있어 `categories`·`subcategories` 배열로 둔다. 관심분야 필터는 `categories && ARRAY[...]`(겹침)로 걸고 `categories`에 GIN 인덱스를 건다. 단일 문자열 + 길이 제한 컬럼은 길이 초과 시 적재 실패, 다중 분류 정책 누락 위험이 있어 채택하지 않았다.
 - `saving_products.fin_co_no`는 `financial_companies`에 **FK를 걸지 않는다**. `companySearch`에 회사가 빠져도 상품 적재가 실패하지 않게 하고, 매핑 성공률은 품질 리포트에서 측정한다.
 - 금리 옵션은 `(fin_co_no, fin_prdt_cd, rate_type, reserve_type, term_months)` 유니크로 upsert 키를 둔다.
 

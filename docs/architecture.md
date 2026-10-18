@@ -48,6 +48,14 @@ flowchart LR
 | `app/core/config.py` | `pydantic-settings` 기반 설정 |
 | `app/core/database.py` | SQLAlchemy async 엔진 (DATABASE_URL 있을 때만 생성) |
 | `app/models/` | ORM 모델: `Policy`, `FinancialCompany`, `SavingProduct`, `SavingProductOption`, `IngestRun` |
+| `app/ingest/http.py` | 수집 공통 HTTP: 요청 간 0.5초 지연, 3회 재시도(연결 오류·429/5xx·비 JSON), API 키 마스킹 |
+| `app/ingest/ontong.py` | 온통청년 `getPlcy` 클라이언트 (pageSize 100, `totCount` 기반 페이지네이션, `plcyNo` 중복 제거) |
+| `app/ingest/fss.py` | 금감원 `savingProductsSearch`·`companySearch` 클라이언트 (권역별 `max_page_no` 페이지네이션) |
+| `app/ingest/codes.py` | 온통청년 코드표 (혼인·소득·취업상태·학력·전공·특화·신청기간, "제한없음" 코드) |
+| `app/ingest/pipeline.py` | 수집 → 정규화(중복·실패 집계) → 소스별 단일 트랜잭션 적재, `ingest_runs` 기록 |
+| `app/ingest/loader.py` | `ON CONFLICT DO UPDATE` upsert(500행 배치), 미수집 행 삭제는 기존 행 5% 상한(근거: `decisions/003-ingest-prune-safety.md`), 적금 옵션은 받은 상품만 교체 |
+| `app/ingest/__main__.py` | 적재 CLI `uv run python -m app.ingest --source all\|ontong\|fss` |
+| `app/ingest/normalize.py` | 원문 → 모델 컬럼 dict 순수 함수 (공백 날짜, 신청기간 파싱, 시군구→시도, URL 검증, `is_youth`, 미등록 코드 집계) |
 | `alembic/` | 마이그레이션 (async 템플릿, URL은 `Settings`에서 읽음) |
 | `compose.yaml` | 로컬 PostgreSQL 16 |
 

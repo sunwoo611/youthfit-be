@@ -12,6 +12,8 @@ from urllib.parse import urlsplit
 from app.ingest import codes
 
 KST = timezone(timedelta(hours=9))
+MIN_YEAR = 2000
+MAX_YEAR = 2100
 
 # 의미 없는 값. 품질 측정을 위해 "별도 문의" 같은 안내 문구는 남긴다.
 _PLACEHOLDERS = frozenset({"-", "--", "null", "NULL"})
@@ -80,13 +82,15 @@ def parse_decimal(value: Any) -> Decimal | None:
 
 
 def parse_yyyymmdd(value: Any) -> date | None:
+    """YYYYMMDD → date. 원문에 "00010101" 같은 입력 오류가 있어 MIN_YEAR~MAX_YEAR 밖은 None."""
     text = clean_text(value)
     if text is None or len(text) != 8 or not text.isdigit():
         return None
     try:
-        return datetime.strptime(text, "%Y%m%d").date()
+        parsed = datetime.strptime(text, "%Y%m%d").date()
     except ValueError:
         return None
+    return parsed if MIN_YEAR <= parsed.year <= MAX_YEAR else None
 
 
 def parse_apply_period(value: Any) -> tuple[date | None, date | None]:

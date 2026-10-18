@@ -76,12 +76,17 @@ SPECIAL: dict[str, str] = {
 }
 SPECIAL_ANY = "0014010"
 
+# 0057003 은 공식 화면이 표시하지 않고 정책코드 API(getPolicyCode)도 빈 값을 준다.
+# 신청기간(aplyYmd)이 항상 비어 있고, 사업기간이 끝난 정책과 연중 정책이 섞여 있어
+# "마감"으로 단정할 수 없다.
 APPLY_PERIOD: dict[str, str] = {
     "0057001": "특정 기간",
     "0057002": "상시",
+    "0057003": "기타(신청기간 미지정)",
 }
 APPLY_PERIOD_FIXED = "0057001"
 APPLY_PERIOD_ALWAYS = "0057002"
+APPLY_PERIOD_UNSPECIFIED = "0057003"
 
 # sprtTrgtAgeLmtYn 은 이름과 반대로 'Y' 가 연령 제한 없음이다 (공식 화면 표시 로직 기준).
 AGE_NO_LIMIT_FLAG = "Y"

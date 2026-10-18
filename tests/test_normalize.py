@@ -90,6 +90,9 @@ def test_clean_url(value, expected):
         ("        ", (None, None)),
         ("상시 모집", (None, None)),
         ("20261340 ~ 20261231", (None, date(2026, 12, 31))),
+        ("00010101 ~ 00010101", (None, None)),
+        ("00020220 ~ 20260308", (None, date(2026, 3, 8))),
+        ("20260101 ~ 21260101", (date(2026, 1, 1), None)),
     ],
 )
 def test_parse_apply_period(value, expected):
@@ -180,6 +183,7 @@ def test_normalized_policy_keys_match_model(ontong_policies):
 
 def test_find_unknown_codes(ontong_policies):
     assert all(find_unknown_codes(p) == [] for p in ontong_policies)
+    assert find_unknown_codes({**ontong_policies[0], "aplyPrdSeCd": "0057003"}) == []
 
     raw = {**ontong_policies[0], "jobCd": "0013003,0013099", "mrgSttsCd": "0055009"}
     assert sorted(find_unknown_codes(raw)) == [

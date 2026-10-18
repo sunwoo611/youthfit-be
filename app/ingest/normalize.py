@@ -7,6 +7,7 @@ import re
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any
+from urllib.parse import urlsplit
 
 from app.ingest import codes
 
@@ -18,7 +19,19 @@ _PLACEHOLDERS = frozenset({"-", "--", "null", "NULL"})
 _DATE_RANGE = re.compile(r"(\d{8})\s*~\s*(\d{8})")
 _POLICY_CODE = re.compile(r"^\d{7}$")
 _SIGUNGU_CODE = re.compile(r"^\d{5}$")
-_DOMAIN_LIKE = re.compile(r"^[\w-]+(\.[\w-]+)+(:\d+)?(/\S*)?$")
+
+# Policy 코드 컬럼 → 원문 필드 (앞쪽 우선).
+# 특화 필드는 문서(sBizCd)와 실제 응답(sbizCd) 표기가 다르다.
+_POLICY_CODE_FIELDS: dict[str, tuple[str, ...]] = {
+    "marriage_code": ("mrgSttsCd",),
+    "earn_cond_code": ("earnCndSeCd",),
+    "job_codes": ("jobCd",),
+    "school_codes": ("schoolCd",),
+    "major_codes": ("plcyMajorCd",),
+    "special_codes": ("sbizCd", "sBizCd"),
+    "apply_period_code": ("aplyPrdSeCd",),
+}
+_SINGLE_CODE_COLUMNS = frozenset({"marriage_code", "earn_cond_code", "apply_period_code"})
 
 YOUTH_KEYWORDS = ("청년", "사회초년생")
 # 예: "만 19세 이상 ~ 만 34세 이하", "만19~34세"
@@ -105,17 +118,46 @@ def parse_kst_datetime(value: Any) -> datetime | None:
         return None
 
 
-def clean_url(value: Any) -> str | None:
-    """http(s) URL 만 통과. 스킴 없는 도메인은 http:// 를 붙이고, 그 외 문자열은 버린다."""
-    text = clean_text(value)
-    if text is None or any(ch.isspace() for ch in text):
+def _http_url(candidate: str) -> str | None:
+    if any(ch.isspace() for ch in candidate):
         return None
-    lowered = text.lower()
-    if lowered.startswith(("http://", "https://")):
-        return text
-    if _DOMAIN_LIKE.match(text):
-        return f"http://{text}"
+    if "://" not in candidate:
+        candidate = f"http://{candidate}"
+    try:
+        parts = urlsplit(candidate)
+        host = parts.hostname
+        parts.port  # noqa: B018 - 잘못된 포트면 ValueError
+    except ValueError:
+        return None
+    if parts.scheme.lower() not in ("http", "https") or not host:
+        return None
+    if parts.username is not None or parts.password is not None:
+        return None
+    labels = host.split(".")
+    tld = labels[-1]
+    if len(labels) < 2 or not all(labels) or len(tld) < 2 or not tld.isalpha():
+        return None
+    return candidate
+
+
+def clean_url(value: Any) -> str | None:
+    """http(s) URL 만 통과. 스킴 없는 도메인은 http:// 를 붙인다.
+
+    호스트는 알파벳 최상위 도메인으로 끝나야 한다(날짜·버전 문자열 차단).
+    콤마로 여러 URL 이 붙어 있으면 첫 번째 유효한 URL 을 쓴다.
+    """
+    text = clean_text(value)
+    if text is None:
+        return None
+    for candidate in text.split(","):
+        url = _http_url(candidate.strip())
+        if url:
+            return url
     return None
+
+
+def _raw_field(raw: dict[str, Any], keys: tuple[str, ...]) -> Any:
+    return next((raw[k] for k in keys if clean_text(raw.get(k)) is not None), None)
 
 
 def _codes(value: Any) -> list[str]:
@@ -173,7 +215,7 @@ def normalize_policy(raw: dict[str, Any]) -> dict[str, Any]:
         "earn_etc": clean_text(raw.get("earnEtcCn")),
         "job_codes": _codes(raw.get("jobCd")),
         "school_codes": _codes(raw.get("schoolCd")),
-        "special_codes": _codes(raw.get("sbizCd") or raw.get("sBizCd")),
+        "special_codes": _codes(_raw_field(raw, _POLICY_CODE_FIELDS["special_codes"])),
         "major_codes": _codes(raw.get("plcyMajorCd")),
         "sigungu_codes": sigungu_codes,
         "sido_codes": sido_codes,
@@ -193,13 +235,22 @@ def normalize_policy(raw: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def find_unknown_codes(policy: dict[str, Any]) -> list[tuple[str, str]]:
-    """정규화된 정책에서 코드표에 없는 (컬럼, 코드) 목록. 코드표 변경 감지용."""
+def find_unknown_codes(raw: dict[str, Any]) -> list[tuple[str, str]]:
+    """원문 정책에서 코드표에 없는 (컬럼, 값) 목록. 코드표 변경·형식 오류 감지용.
+
+    정규화는 형식이 깨진 코드를 버리므로, 버려지는 값까지 세려면 원문을 봐야 한다.
+    단일 코드 컬럼에 콤마로 여러 값이 오면 전체 문자열을 하나의 미등록 값으로 본다.
+    """
     unknown: list[tuple[str, str]] = []
-    for column, table in codes.POLICY_CODE_COLUMNS.items():
-        value = policy.get(column)
-        values = value if isinstance(value, list) else [value] if value else []
-        unknown.extend((column, code) for code in values if code not in table)
+    for column, keys in _POLICY_CODE_FIELDS.items():
+        table = codes.POLICY_CODE_COLUMNS[column]
+        value = _raw_field(raw, keys)
+        if column in _SINGLE_CODE_COLUMNS:
+            text = clean_text(value)
+            values = [text] if text else []
+        else:
+            values = split_csv(value)
+        unknown.extend((column, v) for v in values if v not in table)
     return unknown
 
 

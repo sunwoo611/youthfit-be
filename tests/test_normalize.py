@@ -60,9 +60,21 @@ def test_clean_text(value, expected):
         ),
         ("www.seoul.go.kr", "http://www.seoul.go.kr"),
         ("youth.seoul.go.kr/site/main", "http://youth.seoul.go.kr/site/main"),
+        ("HTTPS://WWW.GOV.KR/portal", "HTTPS://WWW.GOV.KR/portal"),
+        ("https://www.work24.go.kr:8443/a?b=1", "https://www.work24.go.kr:8443/a?b=1"),
+        ("https://a.kr,https://b.kr", "https://a.kr"),
+        ("별도 문의, www.b.kr", "http://www.b.kr"),
         ("", None),
         ("홈페이지 참조", None),
         ("https://a.kr 참조", None),
+        ("2026.05.18", None),
+        ("v1.0", None),
+        ("http://", None),
+        ("https://localhost/apply", None),
+        ("https://a.kr:99999", None),
+        ("mailto:help@youth.go.kr", None),
+        ("javascript:alert(1)", None),
+        ("ftp://files.go.kr", None),
     ],
 )
 def test_clean_url(value, expected):
@@ -167,14 +179,33 @@ def test_normalized_policy_keys_match_model(ontong_policies):
 
 
 def test_find_unknown_codes(ontong_policies):
-    assert all(find_unknown_codes(normalize_policy(p)) == [] for p in ontong_policies)
+    assert all(find_unknown_codes(p) == [] for p in ontong_policies)
 
-    row = normalize_policy(
-        {**ontong_policies[0], "jobCd": "0013003,0013099", "mrgSttsCd": "0055009"}
-    )
-    assert sorted(find_unknown_codes(row)) == [
+    raw = {**ontong_policies[0], "jobCd": "0013003,0013099", "mrgSttsCd": "0055009"}
+    assert sorted(find_unknown_codes(raw)) == [
         ("job_codes", "0013099"),
         ("marriage_code", "0055009"),
+    ]
+
+
+def test_find_unknown_codes_counts_malformed_values_dropped_by_normalize(ontong_policies):
+    raw = {
+        **ontong_policies[0],
+        "jobCd": "13003,ABC",
+        "mrgSttsCd": "0055001,0055002",
+        "sbizCd": "",
+        "sBizCd": "0014099",
+    }
+    row = normalize_policy(raw)
+    assert row["job_codes"] == []
+    assert row["marriage_code"] is None
+    assert row["special_codes"] == ["0014099"]
+
+    assert sorted(find_unknown_codes(raw)) == [
+        ("job_codes", "13003"),
+        ("job_codes", "ABC"),
+        ("marriage_code", "0055001,0055002"),
+        ("special_codes", "0014099"),
     ]
 
 

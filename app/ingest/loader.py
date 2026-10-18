@@ -1,9 +1,14 @@
-"""정규화된 행을 PostgreSQL 에 적재한다. 호출자가 트랜잭션을 연다."""
+"""정규화된 행을 PostgreSQL 에 적재한다.
+
+`start_run`·`finish_run` 외에는 호출자가 트랜잭션을 연다.
+"""
 
 from collections.abc import Sequence
-from typing import Any
+from dataclasses import dataclass
+from datetime import timedelta
+from typing import Any, TypeVar
 
-from sqlalchemy import Table, delete, func, insert, select, tuple_, update
+from sqlalchemy import ColumnElement, Table, delete, func, insert, select, tuple_, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
@@ -13,15 +18,64 @@ from app.models import FinancialCompany, IngestRun, Policy, SavingProduct, Savin
 BATCH_SIZE = 500
 ERROR_MAX_LEN = 2000
 
+# 한 번의 적재에서 지울 수 있는 행은 기존 행의 5% 까지. API 가 일시적으로 적은 건수를 돌려줘도
+# 미러가 비지 않게 하는 안전장치다. 넘으면 아무것도 지우지 않는다.
+MAX_PRUNE_RATIO = 0.05
+
+# 이 시간보다 오래 running 으로 남은 실행 기록은 강제 종료된 것으로 본다 (일 1회 배치 기준).
+STALE_RUN_AFTER = timedelta(hours=6)
+
 _policies: Table = Policy.__table__  # type: ignore[assignment]
 _companies: Table = FinancialCompany.__table__  # type: ignore[assignment]
 _products: Table = SavingProduct.__table__  # type: ignore[assignment]
 _options: Table = SavingProductOption.__table__  # type: ignore[assignment]
 _runs: Table = IngestRun.__table__  # type: ignore[assignment]
 
+T = TypeVar("T")
 
-def _chunks(rows: Sequence[dict[str, Any]], size: int) -> list[Sequence[dict[str, Any]]]:
-    return [rows[i : i + size] for i in range(0, len(rows), size)]
+
+@dataclass(frozen=True)
+class PruneResult:
+    existing: int
+    stale: int
+    deleted: int
+
+    @property
+    def blocked(self) -> bool:
+        return self.stale > 0 and self.deleted == 0
+
+
+def prune_allowed(stale: int, existing: int, max_ratio: float = MAX_PRUNE_RATIO) -> bool:
+    """삭제 대상(stale)이 적재 전 기존 행(existing)의 max_ratio 이하일 때만 허용."""
+    if stale == 0:
+        return True
+    return existing > 0 and stale <= existing * max_ratio
+
+
+def _chunks(items: Sequence[T], size: int) -> list[Sequence[T]]:
+    return [items[i : i + size] for i in range(0, len(items), size)]
+
+
+async def _count(conn: AsyncConnection, table: Table, *where: ColumnElement[bool]) -> int:
+    stmt = select(func.count()).select_from(table)
+    if where:
+        stmt = stmt.where(*where)
+    return (await conn.scalar(stmt)) or 0
+
+
+async def _prune_stale(
+    conn: AsyncConnection, table: Table, scope: Sequence[ColumnElement[bool]], existing: int
+) -> PruneResult:
+    """이번 트랜잭션에서 갱신되지 않은 행을 상한 안에서만 삭제한다.
+
+    같은 트랜잭션의 now() 는 고정이라, 이번에 upsert 된 행만 ingested_at == now() 이다.
+    """
+    stale_where = [*scope, table.c.ingested_at < func.now()]
+    stale = await _count(conn, table, *stale_where)
+    if stale == 0 or not prune_allowed(stale, existing):
+        return PruneResult(existing=existing, stale=stale, deleted=0)
+    result = await conn.execute(delete(table).where(*stale_where))
+    return PruneResult(existing=existing, stale=stale, deleted=result.rowcount or 0)
 
 
 async def upsert_rows(
@@ -47,17 +101,11 @@ async def upsert_rows(
 
 async def load_policies(
     conn: AsyncConnection, rows: Sequence[dict[str, Any]], *, prune: bool
-) -> tuple[int, int]:
-    """정책 upsert. prune 이면 이번 트랜잭션에서 갱신되지 않은 정책을 삭제한다.
-
-    반환: (upsert 건수, 삭제 건수)
-    """
+) -> tuple[int, PruneResult | None]:
+    """정책 upsert. prune 이면 이번에 갱신되지 않은 정책을 상한 안에서 삭제한다."""
+    existing = await _count(conn, _policies) if prune else 0
     upserted = await upsert_rows(conn, _policies, rows, ["plcy_no"])
-    pruned = 0
-    if prune:
-        # 같은 트랜잭션의 now() 는 고정이라, 이번에 upsert 된 행만 ingested_at == now() 이다.
-        result = await conn.execute(delete(_policies).where(_policies.c.ingested_at < func.now()))
-        pruned = result.rowcount or 0
+    pruned = await _prune_stale(conn, _policies, [], existing) if prune else None
     return upserted, pruned
 
 
@@ -72,38 +120,53 @@ async def load_saving_products(
     options: Sequence[dict[str, Any]],
     *,
     prune: bool,
-) -> tuple[int, int, int]:
-    """권역 단위로 상품 upsert, 해당 권역 옵션은 전부 교체, prune 이면 사라진 상품 삭제.
+) -> tuple[int, int, PruneResult | None]:
+    """상품 upsert 후 이번에 받은 상품의 옵션만 교체한다.
 
-    반환: (상품 upsert 건수, 옵션 insert 건수, 상품 삭제 건수)
+    받지 못한 상품의 옵션은 건드리지 않는다.
+    prune 으로 지워지는 상품의 옵션은 FK cascade 로 함께 삭제된다.
+    반환: (상품 upsert 건수, 옵션 insert 건수, 삭제 결과)
     """
+    scope = [_products.c.fin_grp_code == fin_grp_code]
+    existing = await _count(conn, _products, *scope) if prune else 0
     upserted = await upsert_rows(conn, _products, products, ["fin_co_no", "fin_prdt_cd"])
 
-    group_products = select(_products.c.fin_co_no, _products.c.fin_prdt_cd).where(
-        _products.c.fin_grp_code == fin_grp_code
-    )
-    await conn.execute(
-        delete(_options).where(
-            tuple_(_options.c.fin_co_no, _options.c.fin_prdt_cd).in_(group_products)
+    keys = [(p["fin_co_no"], p["fin_prdt_cd"]) for p in products]
+    for chunk in _chunks(keys, BATCH_SIZE):
+        await conn.execute(
+            delete(_options).where(
+                tuple_(_options.c.fin_co_no, _options.c.fin_prdt_cd).in_(list(chunk))
+            )
         )
-    )
     for chunk in _chunks(options, BATCH_SIZE):
         await conn.execute(insert(_options), list(chunk))
 
-    pruned = 0
-    if prune:
-        result = await conn.execute(
-            delete(_products).where(
-                _products.c.fin_grp_code == fin_grp_code,
-                _products.c.ingested_at < func.now(),
-            )
-        )
-        pruned = result.rowcount or 0
+    pruned = await _prune_stale(conn, _products, scope, existing) if prune else None
     return upserted, len(options), pruned
 
 
+async def abandon_stale_runs(conn: AsyncConnection, source: str) -> int:
+    """STALE_RUN_AFTER 보다 오래 running 인 같은 소스의 기록을 abandoned 로 바꾼다."""
+    result = await conn.execute(
+        update(_runs)
+        .where(
+            _runs.c.source == source,
+            _runs.c.status == "running",
+            _runs.c.started_at < func.now() - STALE_RUN_AFTER,
+        )
+        .values(
+            status="abandoned",
+            finished_at=func.now(),
+            error="종료 기록 없이 끝난 실행 (강제 종료 추정)",
+        )
+    )
+    return result.rowcount or 0
+
+
 async def start_run(engine: AsyncEngine, source: str) -> int:
+    """실행 기록을 만든다. 같은 소스에서 오래 running 으로 남은 기록은 먼저 정리한다."""
     async with engine.begin() as conn:
+        await abandon_stale_runs(conn, source)
         result = await conn.execute(
             insert(_runs).values(source=source, status="running").returning(_runs.c.id)
         )

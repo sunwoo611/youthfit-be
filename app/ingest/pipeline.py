@@ -3,6 +3,7 @@
 외부 API 호출은 DB 트랜잭션 밖에서 끝내고, 적재는 소스별 단일 트랜잭션으로 한다.
 """
 
+import asyncio
 import logging
 import time
 from collections import Counter
@@ -27,6 +28,11 @@ from app.ingest.ontong import OntongClient
 logger = logging.getLogger(__name__)
 
 MAX_ERROR_SAMPLES = 5
+
+
+def is_complete_fetch(total_count: int, unique_fetched: int) -> bool:
+    """API 가 알려준 전체 건수 이상을 중복 없이 받았는지. 미수집 행 삭제의 첫 번째 조건."""
+    return total_count > 0 and unique_fetched >= total_count
 
 
 @dataclass
@@ -125,15 +131,40 @@ class SourceReport:
     notes: list[str] = field(default_factory=list)
     error: str | None = None
 
+    def apply_prune(self, label: str, complete: bool, result: loader.PruneResult | None) -> bool:
+        """삭제 결과를 반영하고, 미수집 행 정리까지 끝났으면 True."""
+        if not complete:
+            self.notes.append(f"{label}: 수집이 불완전해 미수집 행 삭제를 건너뜀")
+            return False
+        if result is None:
+            return False
+        self.pruned += result.deleted
+        if result.blocked:
+            self.notes.append(
+                f"{label}: 삭제 대상 {result.stale}건이 기존 {result.existing}건의"
+                f" {loader.MAX_PRUNE_RATIO:.0%} 상한을 넘어 삭제를 건너뜀 (원본 확인 필요)"
+            )
+            return False
+        return True
+
 
 async def _run(
     engine: AsyncEngine, report: SourceReport, body: Callable[[], Awaitable[None]]
 ) -> SourceReport:
-    """ingest_runs 에 시작·종료를 기록한다. 실패해도 예외를 올리지 않아 다른 소스는 계속 돈다."""
+    """ingest_runs 에 시작·종료를 기록한다.
+
+    일반 예외는 failed 로 기록하고 삼켜서 다른 소스가 계속 돌게 한다.
+    Ctrl+C·작업 취소는 cancelled 로 기록한 뒤 다시 올려 프로그램을 멈춘다.
+    """
     run_id = await loader.start_run(engine, report.source)
     started = time.perf_counter()
+    interrupted: BaseException | None = None
     try:
         await body()
+    except (asyncio.CancelledError, KeyboardInterrupt) as exc:
+        report.status = "cancelled"
+        report.error = "사용자 중단 또는 작업 취소"
+        interrupted = exc
     except Exception as exc:
         logger.exception("%s 적재 실패", report.source)
         report.status = "failed"
@@ -147,6 +178,8 @@ async def _run(
         upserted=report.upserted,
         error=report.error,
     )
+    if interrupted is not None:
+        raise interrupted
     return report
 
 
@@ -158,22 +191,21 @@ async def run_ontong(engine: AsyncEngine, client: OntongClient) -> SourceReport:
         report.fetched = len(result.policies)
         report.details["api_total_count"] = result.total_count
 
+        unique = len({p.get("plcyNo") for p in result.policies})
+        report.details["unique_fetched"] = unique
+
         prepared, unknown = prepare_policies(result.policies)
         report.skipped, report.duplicates = prepared.skipped, prepared.duplicates
         report.unknown_codes = unknown
         report.notes.extend(prepared.error_samples)
 
-        prune = result.is_complete
-        if not prune:
-            report.notes.append(
-                f"전체 {result.total_count}건 중 {report.fetched}건만 수집되어"
-                " 미수집 정책 삭제를 건너뜀"
-            )
+        complete = is_complete_fetch(result.total_count, unique)
         async with engine.begin() as conn:
-            report.upserted, report.pruned = await loader.load_policies(
-                conn, prepared.rows, prune=prune
+            report.upserted, pruned = await loader.load_policies(
+                conn, prepared.rows, prune=complete
             )
-        report.status = "success" if prune else "partial"
+        label = f"정책(전체 {result.total_count}건 중 {unique}건 수집)"
+        report.status = "success" if report.apply_prune(label, complete, pruned) else "partial"
 
     return await _run(engine, report, body)
 
@@ -191,20 +223,20 @@ async def run_fss(
             companies = await client.fetch_companies(grp)
             products = await client.fetch_saving_products(grp)
             report.fetched += len(companies.base_list) + len(products.base_list)
-            complete = products.total_count > 0 and len(products.base_list) >= products.total_count
-            if not complete:
-                report.notes.append(f"권역 {grp} 상품 수집이 불완전해 미수집 상품 삭제를 건너뜀")
+            unique = len({(p.get("fin_co_no"), p.get("fin_prdt_cd")) for p in products.base_list})
+            complete = is_complete_fetch(products.total_count, unique)
             fetched.append((grp, prepare_companies(companies), prepare_saving(products), complete))
 
         details: Counter[str] = Counter()
+        all_pruned = True
         async with engine.begin() as conn:
             for grp, companies, saving, complete in fetched:
                 n_companies = await loader.load_companies(conn, companies.rows)
-                n_products, n_options, n_pruned = await loader.load_saving_products(
+                n_products, n_options, pruned = await loader.load_saving_products(
                     conn, grp, saving.products.rows, saving.options.rows, prune=complete
                 )
                 report.upserted += n_companies + n_products
-                report.pruned += n_pruned
+                all_pruned &= report.apply_prune(f"권역 {grp} 상품", complete, pruned)
                 for prepared in (companies, saving.products, saving.options):
                     report.skipped += prepared.skipped
                     report.duplicates += prepared.duplicates
@@ -220,7 +252,7 @@ async def run_fss(
                 )
                 details[f"{grp}_orphan_options"] += saving.orphan_options
         report.details.update(details)
-        report.status = "success" if all(c for *_, c in fetched) else "partial"
+        report.status = "success" if all_pruned else "partial"
 
     return await _run(engine, report, body)
 

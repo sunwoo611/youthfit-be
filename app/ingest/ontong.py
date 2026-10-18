@@ -26,11 +26,6 @@ class OntongFetchResult:
     total_count: int
     policies: list[dict[str, Any]]
 
-    @property
-    def is_complete(self) -> bool:
-        """API 가 알려준 전체 건수 이상을 받았는지. 미적재 정책 삭제 여부 판단에 쓴다."""
-        return self.total_count > 0 and len(self.policies) >= self.total_count
-
 
 class OntongClient:
     def __init__(

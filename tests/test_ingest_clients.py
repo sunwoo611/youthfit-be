@@ -62,7 +62,6 @@ async def test_ontong_paginates_until_total_count():
 
     assert [p["plcyNo"] for p in result.policies] == ["P1-0", "P1-1", "P2-0", "P2-1", "P3-0"]
     assert result.total_count == 5
-    assert result.is_complete
     assert [r.url.params["pageNum"] for r in requests] == ["1", "2", "3"]
     first = requests[0].url.params
     assert first["apiKeyNm"] == API_KEY
@@ -90,7 +89,7 @@ async def test_ontong_stops_on_empty_page():
         result = await OntongClient(API_KEY, http, page_size=1).fetch_all_policies()
 
     assert [p["plcyNo"] for p in result.policies] == ["P1"]
-    assert not result.is_complete
+    assert result.total_count == 10
 
 
 async def test_ontong_keeps_duplicates_for_caller():
@@ -103,7 +102,7 @@ async def test_ontong_keeps_duplicates_for_caller():
         result = await OntongClient(API_KEY, http, page_size=2).fetch_all_policies()
 
     assert [p["plcyNo"] for p in result.policies] == ["A", "B", "B"]
-    assert result.is_complete
+    assert result.total_count == 3
 
 
 async def test_ontong_error_result_code_raises():
@@ -150,7 +149,7 @@ async def test_retries_transport_error():
     async with _http(handler) as http:
         result = await OntongClient(API_KEY, http).fetch_all_policies()
         assert result.policies == []
-        assert not result.is_complete
+        assert result.total_count == 0
 
     assert calls == 2
 

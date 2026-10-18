@@ -30,6 +30,32 @@ uv run uvicorn app.main:app --reload
   - `DATABASE_URL` 미설정 → `degraded` / `not_configured`
   - DB 연결 성공 → `ok` / `up`
 
+## 공공 데이터 적재 (일 배치)
+
+온통청년 정책과 금감원 적금(은행·저축은행)을 PostgreSQL 에 미러링합니다. `.env` 에 `ONTONG_YOUTH_API_KEY`, `FSS_API_KEY` 가 필요합니다.
+
+```powershell
+uv run python -m app.ingest                  # 전체
+uv run python -m app.ingest --source ontong  # 온통청년만
+uv run python -m app.ingest --source fss     # 금감원만
+```
+
+- 실행 결과(건수, 소요 시간, 미등록 코드)는 표준 출력에, 실행 이력은 `ingest_runs` 테이블에 남습니다.
+- 전체 수집이 끝난 경우에만 원본에서 사라진 정책·상품을 삭제합니다. 일부만 수집되면 `partial` 로 기록하고 삭제를 건너뜁니다.
+- 실패 시 종료 코드 1, 설정 누락 시 2.
+
+일 1회 스케줄링 예시 (등록은 각자 환경에서):
+
+```powershell
+# Windows 작업 스케줄러: 매일 04:00
+schtasks /Create /TN "youthfit-ingest" /SC DAILY /ST 04:00 /TR "powershell -NoProfile -Command \"Set-Location D:\project\youthfit\youthfit-be; uv run python -m app.ingest\""
+```
+
+```bash
+# Linux cron: 매일 04:00
+0 4 * * * cd /srv/youthfit-be && uv run python -m app.ingest >> logs/ingest.log 2>&1
+```
+
 ## 테스트 / 린트
 
 ```powershell
@@ -44,6 +70,7 @@ app/
   main.py          # FastAPI 앱 생성
   api/             # 라우터 (엔드포인트)
   core/            # 설정, DB 연결
+  ingest/          # 공공 API 수집·정규화·적재 (일 배치 CLI)
   models/          # SQLAlchemy ORM 모델
 alembic/           # DB 마이그레이션 (alembic.ini 는 ASCII 만 사용)
 tests/
@@ -56,5 +83,5 @@ compose.yaml       # 로컬 PostgreSQL
 | 단계 | 내용 | 상태 |
 |------|------|------|
 | 1차 | 프로젝트 골격, `/health`, docs·Cursor 규칙 | 완료 |
-| 2차 | 스키마(Alembic), 온통청년·금감원 수집, 1차 룰 필터 API | 예정 |
+| 2차 | 스키마(Alembic), 온통청년·금감원 수집, 1차 룰 필터 API | 진행 중 |
 | 3차+ | 세션, LLM 역질문, RAG 근거 매칭, 캐싱 | 예정 |

@@ -2,7 +2,6 @@
 
 import logging
 import math
-from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
 
@@ -20,6 +19,17 @@ class OntongPage:
     page_num: int
     total_count: int
     policies: list[dict[str, Any]]
+
+
+@dataclass(frozen=True)
+class OntongFetchResult:
+    total_count: int
+    policies: list[dict[str, Any]]
+
+    @property
+    def is_complete(self) -> bool:
+        """API 가 알려준 전체 건수 이상을 받았는지. 미적재 정책 삭제 여부 판단에 쓴다."""
+        return self.total_count > 0 and len(self.policies) >= self.total_count
 
 
 class OntongClient:
@@ -66,25 +76,21 @@ class OntongClient:
             policies=list(result.get("youthPolicyList") or []),
         )
 
-    async def iter_policies(self) -> AsyncIterator[dict[str, Any]]:
-        """1페이지의 totCount 로 마지막 페이지를 정하고, 빈 페이지가 오면 조기 종료한다."""
+    async def fetch_all_policies(self) -> OntongFetchResult:
+        """1페이지의 totCount 로 마지막 페이지를 정하고, 빈 페이지가 오면 조기 종료한다.
+
+        페이지 사이에 데이터가 바뀌면 중복·누락이 생길 수 있어 중복은 그대로 돌려준다.
+        """
         first = await self.fetch_page(1)
         last_page = max(1, math.ceil(first.total_count / self._page_size))
         logger.info("온통청년 총 %d건, %d페이지", first.total_count, last_page)
-        for policy in first.policies:
-            yield policy
+        policies = list(first.policies)
 
         for page_num in range(2, last_page + 1):
             page = await self.fetch_page(page_num)
             if not page.policies:
                 logger.warning("온통청년 %d페이지가 비어 있어 수집을 종료합니다", page_num)
                 break
-            for policy in page.policies:
-                yield policy
+            policies.extend(page.policies)
 
-    async def fetch_all_policies(self) -> list[dict[str, Any]]:
-        policies = [p async for p in self.iter_policies()]
-        unique = {p.get("plcyNo"): p for p in policies}
-        if len(unique) != len(policies):
-            logger.warning("온통청년 중복 plcyNo %d건 제거", len(policies) - len(unique))
-        return list(unique.values())
+        return OntongFetchResult(total_count=first.total_count, policies=policies)

@@ -67,7 +67,7 @@ INTEREST_CATEGORIES: dict[Interest, tuple[tuple[str, ...], tuple[str, ...]]] = {
     Interest.PARTICIPATION: (("참여･기반", "참여권리"), ()),
 }
 
-# 같은 사업이 띄어쓰기·괄호만 다르게 여러 번 등록된 경우를 한 건으로 본다.
+# 같은 사업이 띄어쓰기·괄호만 다르게 여러 번 등록된 경우를 한 건으로 본다(ADR 006).
 _NAME_NOISE = r"[\s()\[\]<>「」『』·ㆍ･,.\-_'\"]+"
 
 _STATUS_RANK = {
@@ -214,6 +214,8 @@ def policy_query(conditions: AppliedConditions, today: date, limit: int = POLICY
     region_rank = region_rank_expr(conditions.sido_code)
     deadline = func.least(Policy.apply_end, Policy.biz_end)
     name_key = func.regexp_replace(Policy.name, _NAME_NOISE, literal(""), "g")
+    # 다른 시군이 같은 이름으로 운영하는 별개 사업(예: 칠곡군·울진군 청년 이사비)은 합치지 않는다.
+    sigungu_key = case((region_rank == REGION_SIGUNGU, Policy.sigungu_codes), else_=None)
 
     ranked = (
         select(
@@ -238,7 +240,7 @@ def policy_query(conditions: AppliedConditions, today: date, limit: int = POLICY
             deadline.label("deadline"),
             func.row_number()
             .over(
-                partition_by=name_key,
+                partition_by=(name_key, sigungu_key),
                 order_by=(
                     status_rank,
                     region_rank,

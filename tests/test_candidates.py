@@ -311,6 +311,26 @@ async def test_dedup_keeps_best_ranked_record_per_normalized_name(db_conn: Async
     assert result.policies.total == 3
 
 
+async def test_dedup_keeps_same_name_programs_of_different_sigungu(db_conn: AsyncConnection):
+    gyeongbuk_all = [f"47{i:03d}" for i in range(23)]
+    await _insert_policies(
+        db_conn,
+        _policy("SIDO-WIDE", sido_codes=["47"], sigungu_codes=gyeongbuk_all),
+        _policy("CHILGOK", name="청년 이사비 지원사업", sido_codes=["47"], sigungu_codes=["47850"]),
+        _policy("ULJIN", name="청년 이사비 지원사업", sido_codes=["47"], sigungu_codes=["47930"]),
+        _policy(
+            "ULJIN-DUP",
+            name="청년이사비 지원사업",
+            sido_codes=["47"],
+            sigungu_codes=["47930"],
+            apply_start=FUTURE,
+        ),
+    )
+    result = await find_candidates(db_conn, CandidateRequest(sido_code="47"), TODAY)
+    assert {item.plcy_no for item in result.policies.items} == {"SIDO-WIDE", "CHILGOK", "ULJIN"}
+    assert result.policies.total == 3
+
+
 async def test_policy_limit_and_total(db_conn: AsyncConnection):
     await _insert_policies(db_conn, *(_policy(f"LIM-{i:03d}") for i in range(POLICY_LIMIT + 5)))
     result = await find_candidates(db_conn, CandidateRequest(sido_code="11"), TODAY)

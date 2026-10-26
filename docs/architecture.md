@@ -48,7 +48,7 @@ flowchart LR
 | `app/schemas/candidates.py` | 후보 API 요청·응답 Pydantic 모델 (취업상태·관심분야 enum, 링크 출처) |
 | `app/services/candidate_service.py` | 1차 룰 필터 SQL: 마감 제외·나이·시도·취업상태·관심분야, 정렬(상태 > 시도 전체·전국·일부 시군구 > 마감 임박), 정책명 정규화 중복 제거, 공식 링크 선택 (근거: `decisions/005`, `006`) |
 | `app/services/query_hints.py` | 자연어 질의에서 지역·취업상태·나이·관심분야 규칙 사전 추출 (LLM 미사용) |
-| `app/core/config.py` | `pydantic-settings` 기반 설정 |
+| `app/core/config.py` | `pydantic-settings` 기반 설정 (CORS 허용 출처, `postgres://`·`sslmode` URL을 asyncpg 형식으로 변환) |
 | `app/core/database.py` | SQLAlchemy async 엔진 (DATABASE_URL 있을 때만 생성) |
 | `app/models/` | ORM 모델: `Policy`, `FinancialCompany`, `SavingProduct`, `SavingProductOption`, `IngestRun` |
 | `app/ingest/http.py` | 수집 공통 HTTP: 요청 간 0.5초 지연, 3회 재시도(연결 오류·429/5xx·비 JSON), API 키 마스킹 |
@@ -63,6 +63,21 @@ flowchart LR
 | `app/services/policy_status.py` | 정책 신청 가능 여부를 조회 시점에 판정 (신청 가능 / 신청 예정 / 마감 / 신청기간 확인 필요, 근거: `decisions/004-policy-availability.md`) |
 | `alembic/` | 마이그레이션 (async 템플릿, URL은 `Settings`에서 읽음) |
 | `compose.yaml` | 로컬 PostgreSQL 16 |
+| `Dockerfile` | uv 기반 이미지. 기동 시 `alembic upgrade head` 후 uvicorn (`$PORT`) |
+| `render.yaml` | Render Blueprint: 무료 웹 서비스 + PostgreSQL, CI 통과 시 자동 배포 (근거: `decisions/007-dev-deploy-render.md`) |
+| `.github/workflows/ci.yml` | push·PR마다 ruff, Postgres 서비스 컨테이너에 마이그레이션 후 pytest |
+| `.github/workflows/ingest.yml` | 일 배치 (매일 04:00 KST, 수동 실행 가능), Secrets의 Render DB 외부 URL로 적재 |
+
+## 배포 (개발 서버)
+
+```mermaid
+flowchart LR
+  Push[main_push] --> CI[GitHub_Actions_CI]
+  CI -->|통과| Render[Render_웹_서비스]
+  Render --> RDB[(Render_PostgreSQL)]
+  Cron[Actions_일_배치] --> RDB
+  FE[프론트_localhost_Vercel] -->|CORS 허용 출처| Render
+```
 
 ## 데이터 스키마
 
@@ -83,3 +98,4 @@ flowchart LR
 - 2026-10-26: 적재 품질 리포트 CLI (`app/ingest/report.py`). 전체·서울·경기·지역 무관 필드 채움률과 크롤링 판단
 - 2026-10-26: 사업기간 컬럼(`biz_start`/`biz_end`) 추가, `app/services/policy_status.py`로 신청 가능 여부 판정
 - 2026-10-26: 1차 룰 필터 `POST /v1/candidates` (정책 50·적금 20 상한, `app/schemas/`, `candidate_service`, `query_hints`)
+- 2026-10-26: 개발 서버 배포 구성 (Dockerfile, `render.yaml`, CI·일 배치 워크플로, CORS 설정, DB URL asyncpg 변환)

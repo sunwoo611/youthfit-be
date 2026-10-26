@@ -66,6 +66,19 @@ schtasks /Create /TN "youthfit-ingest" /SC DAILY /ST 04:00 /TR "powershell -NoPr
 0 4 * * * cd /srv/youthfit-be && uv run python -m app.ingest >> logs/ingest.log 2>&1
 ```
 
+## 후보 추천 API (1차 룰 필터)
+
+`POST /v1/candidates` 는 적재된 DB만 조회해 정책 최대 50건, 적금 최대 20건을 돌려줍니다. 외부 API·LLM 은 호출하지 않습니다.
+
+```powershell
+$body = '{"age": 25, "sido_code": "11", "employment_status": "unemployed", "interests": ["housing"]}'
+Invoke-RestMethod -Method Post -Uri http://localhost:8000/v1/candidates -ContentType "application/json" -Body $body
+```
+
+- 필드는 모두 선택입니다. `query`(자연어 한 문장)를 주면 비어 있는 필드만 규칙 사전으로 채웁니다.
+- 시도를 주지 않으면 전국 정책만 고릅니다. 마감 정책은 빼고, 신청 가능 > 신청 예정 > 신청기간 확인 필요 순입니다.
+- 카드의 `official_url` 은 DB 값으로만 만듭니다 (신청 URL → 참고 URL → 온통청년 상세 페이지, 적금은 금융회사 홈페이지).
+
 ## 테스트 / 린트
 
 ```powershell
@@ -82,6 +95,8 @@ app/
   core/            # 설정, DB 연결
   ingest/          # 공공 API 수집·정규화·적재 (일 배치 CLI)
   models/          # SQLAlchemy ORM 모델
+  schemas/         # 요청·응답 Pydantic 모델
+  services/        # 비즈니스 로직 (신청 가능 여부 판정, 후보 필터)
 alembic/           # DB 마이그레이션 (alembic.ini 는 ASCII 만 사용)
 tests/
 docs/              # 아키텍처, 기술 결정(ADR), 트러블슈팅 일지, 이력서용 기록
@@ -93,5 +108,5 @@ compose.yaml       # 로컬 PostgreSQL
 | 단계 | 내용 | 상태 |
 |------|------|------|
 | 1차 | 프로젝트 골격, `/health`, docs·Cursor 규칙 | 완료 |
-| 2차 | 스키마(Alembic), 온통청년·금감원 수집, 1차 룰 필터 API | 진행 중 |
+| 2차 | 스키마(Alembic), 온통청년·금감원 수집, 1차 룰 필터 API | 완료 |
 | 3차+ | 세션, LLM 역질문, RAG 근거 매칭, 캐싱 | 예정 |

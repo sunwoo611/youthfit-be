@@ -34,5 +34,5 @@ uv run ruff check .
 
 ## 현재 상태
 
-1차 Build 완료: 골격, `/health`, Docker PostgreSQL, docs·규칙.
-다음(2차): Alembic 스키마, 온통청년·금감원 ingest, 룰 필터 API.
+2차 Build 완료: Alembic 스키마, 온통청년·금감원 일 배치 적재, 품질 리포트, 1차 룰 필터 `POST /v1/candidates`.
+다음(3차): 세션, LLM 역질문(후보를 가르는 자격 변수, 시군구 포함), 선정 사유 서술.

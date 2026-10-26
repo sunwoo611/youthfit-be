@@ -1,6 +1,6 @@
 # 아키텍처
 
-> 현재 구현 상태: 스키마, 일 배치 적재, 필드 채움률 리포트까지. 1차 룰 필터 API는 이후.
+> 현재 구현 상태: 스키마, 일 배치 적재, 필드 채움률 리포트, 1차 룰 필터 API(`POST /v1/candidates`)까지. 세션·LLM 역질문은 3차.
 
 ## 처리 흐름
 
@@ -44,7 +44,10 @@ flowchart LR
 | 경로 | 역할 |
 |------|------|
 | `app/main.py` | FastAPI 앱 팩토리 |
-| `app/api/` | 라우터 (현재 `health`) |
+| `app/api/` | 라우터 (`health`, `v1/candidates`), `deps.py`(DB 연결·기준일 의존성) |
+| `app/schemas/candidates.py` | 후보 API 요청·응답 Pydantic 모델 (취업상태·관심분야 enum, 링크 출처) |
+| `app/services/candidate_service.py` | 1차 룰 필터 SQL: 마감 제외·나이·시도·취업상태·관심분야, 정렬(상태 > 시도 전체·전국·일부 시군구 > 마감 임박), 정책명 정규화 중복 제거, 공식 링크 선택 (근거: `decisions/005`, `006`) |
+| `app/services/query_hints.py` | 자연어 질의에서 지역·취업상태·나이·관심분야 규칙 사전 추출 (LLM 미사용) |
 | `app/core/config.py` | `pydantic-settings` 기반 설정 |
 | `app/core/database.py` | SQLAlchemy async 엔진 (DATABASE_URL 있을 때만 생성) |
 | `app/models/` | ORM 모델: `Policy`, `FinancialCompany`, `SavingProduct`, `SavingProductOption`, `IngestRun` |
@@ -79,3 +82,4 @@ flowchart LR
 - 2026-10-17: Alembic + 모델 5개, 첫 마이그레이션 추가
 - 2026-10-26: 적재 품질 리포트 CLI (`app/ingest/report.py`). 전체·서울·경기·지역 무관 필드 채움률과 크롤링 판단
 - 2026-10-26: 사업기간 컬럼(`biz_start`/`biz_end`) 추가, `app/services/policy_status.py`로 신청 가능 여부 판정
+- 2026-10-26: 1차 룰 필터 `POST /v1/candidates` (정책 50·적금 20 상한, `app/schemas/`, `candidate_service`, `query_hints`)

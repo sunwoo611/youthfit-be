@@ -21,8 +21,7 @@ from app.ingest.normalize import KST
 from app.models import FinancialCompany, Policy, SavingProduct
 from app.services.policy_status import Availability, policy_availability
 
-# 적재본에서 단일 시도는 시군구 48개 이하, 49~199개는 거의 없고, 전국은 242~256개에 몰린다.
-REGION_FREE_MIN_SIGUNGU = 200
+REGION_FREE_MIN_SIGUNGU = codes.REGION_FREE_MIN_SIGUNGU
 HIGH_RATIO = 0.5
 CORE_FIELDS_REQUIRED = 2
 SHORT_SUPPORT_CHARS = 30

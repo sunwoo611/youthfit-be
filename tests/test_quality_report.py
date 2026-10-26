@@ -48,7 +48,11 @@ def _policy(**overrides: object) -> dict:
         "age_limited": True,
         "earn_cond_code": codes.EARN_RANGE,
         "job_codes": ["0013003"],
+        "apply_period_code": codes.APPLY_PERIOD_FIXED,
+        "apply_start": date(2026, 10, 1),
         "apply_end": date(2026, 12, 31),
+        "biz_start": None,
+        "biz_end": None,
         "support_content": "월 20만원을 12개월간 지원한다.",
     }
     row.update(overrides)
@@ -122,7 +126,8 @@ def test_aggregate_splits_overlapping_groups_and_field_flags():
     assert seoul.earn_unrestricted == 1
     assert seoul.job_unrestricted == 1
     assert seoul.apply_end_present == 2
-    assert seoul.expired == 1
+    assert seoul.closed == 1
+    assert seoul.open == 1
     assert seoul.support_empty == 1
 
     assert groups[GROUP_REGION_FREE].apply_url_empty == 1
@@ -131,10 +136,35 @@ def test_aggregate_splits_overlapping_groups_and_field_flags():
     assert groups[GROUP_ALL].earn_unrestricted == 1
 
 
-def test_apply_end_on_today_is_not_expired():
+def test_apply_end_on_today_is_not_closed():
     groups = aggregate_policies([_policy(apply_end=TODAY)], TODAY)
     assert groups[GROUP_ALL].apply_end_present == 1
-    assert groups[GROUP_ALL].expired == 0
+    assert groups[GROUP_ALL].closed == 0
+    assert groups[GROUP_ALL].open == 1
+
+
+def test_availability_counts_and_unverified_share_of_live_candidates():
+    unspecified = codes.APPLY_PERIOD_UNSPECIFIED
+    rows = [
+        _policy(),
+        _policy(apply_period_code=codes.APPLY_PERIOD_ALWAYS, apply_start=None, apply_end=None),
+        _policy(apply_start=date(2026, 11, 1)),
+        _policy(apply_period_code=unspecified, apply_start=None, apply_end=None),
+        _policy(
+            apply_period_code=unspecified,
+            apply_start=None,
+            apply_end=None,
+            biz_end=date(2025, 12, 31),
+        ),
+        _policy(apply_end=date(2026, 10, 25)),
+    ]
+    stats = aggregate_policies(rows, TODAY)[GROUP_ALL]
+    assert (stats.open, stats.upcoming, stats.closed, stats.unverified) == (2, 1, 2, 1)
+
+    text = render_markdown(
+        aggregate_policies(rows, TODAY), aggregate_savings([]), TODAY
+    )
+    assert "| 마감 제외 후보 중 신청기간 확인 필요 | 25.0% (1/4) |" in text
 
 
 @pytest.mark.parametrize(

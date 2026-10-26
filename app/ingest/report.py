@@ -19,6 +19,7 @@ from app.core.database import dispose_engine, get_engine
 from app.ingest import codes
 from app.ingest.normalize import KST
 from app.models import FinancialCompany, Policy, SavingProduct
+from app.services.policy_status import Availability, policy_availability
 
 # 적재본에서 단일 시도는 시군구 48개 이하, 49~199개는 거의 없고, 전국은 242~256개에 몰린다.
 REGION_FREE_MIN_SIGUNGU = 200
@@ -50,7 +51,10 @@ _FLAG_FIELDS = (
     "earn_unrestricted",
     "job_unrestricted",
     "apply_end_present",
-    "expired",
+    "open",
+    "upcoming",
+    "closed",
+    "unverified",
     "support_empty",
     "support_short",
     "support_mid",
@@ -71,7 +75,10 @@ class PolicyStats:
     earn_unrestricted: int = 0
     job_unrestricted: int = 0
     apply_end_present: int = 0
-    expired: int = 0
+    open: int = 0
+    upcoming: int = 0
+    closed: int = 0
+    unverified: int = 0
     support_empty: int = 0
     support_short: int = 0
     support_mid: int = 0
@@ -142,13 +149,25 @@ def _support_bucket(value: object) -> str:
     return "long"
 
 
+def _as_date(value: object) -> date | None:
+    return value if isinstance(value, date) else None
+
+
 def _policy_flags(row: Mapping[str, object], today: date) -> dict[str, bool]:
     apply_url_empty = is_blank(row.get("apply_url"))
     ref_urls_empty = _ref_urls_empty(row.get("ref_urls"))
     bucket = _support_bucket(row.get("support_content"))
     apply_end = row.get("apply_end")
-    has_end = isinstance(apply_end, date)
     job_codes = row.get("job_codes") or []
+    code = row.get("apply_period_code")
+    status = policy_availability(
+        code if isinstance(code, str) else None,
+        apply_start=_as_date(row.get("apply_start")),
+        apply_end=_as_date(apply_end),
+        biz_start=_as_date(row.get("biz_start")),
+        biz_end=_as_date(row.get("biz_end")),
+        today=today,
+    )
     return {
         "apply_url_empty": apply_url_empty,
         "ref_urls_empty": ref_urls_empty,
@@ -159,8 +178,11 @@ def _policy_flags(row: Mapping[str, object], today: date) -> dict[str, bool]:
         "age_unlimited": row.get("age_limited") is False,
         "earn_unrestricted": row.get("earn_cond_code") == codes.EARN_ANY,
         "job_unrestricted": not job_codes or codes.JOB_ANY in job_codes,
-        "apply_end_present": has_end,
-        "expired": has_end and apply_end < today,
+        "apply_end_present": isinstance(apply_end, date),
+        "open": status is Availability.OPEN,
+        "upcoming": status is Availability.UPCOMING,
+        "closed": status is Availability.CLOSED,
+        "unverified": status is Availability.UNVERIFIED,
         "support_empty": bucket == "empty",
         "support_short": bucket == "short",
         "support_mid": bucket == "mid",
@@ -261,7 +283,10 @@ def render_markdown(
             ("소득 조건 무관", "earn_unrestricted"),
             ("취업상태 제한없음", "job_unrestricted"),
             ("신청 종료일 있음", "apply_end_present"),
-            ("신청 마감", "expired"),
+            ("신청 가능", "open"),
+            ("신청 예정", "upcoming"),
+            ("마감", "closed"),
+            ("신청기간 확인 필요", "unverified"),
             ("지원 내용 없음", "support_empty"),
             (f"지원 내용 짧음 (1~{SHORT_SUPPORT_CHARS - 1}자)", "support_short"),
             (f"지원 내용 {SHORT_SUPPORT_CHARS}~{LONG_SUPPORT_CHARS - 1}자", "support_mid"),
@@ -273,12 +298,18 @@ def render_markdown(
         format_ratio(item.support_empty + item.support_short, item.total)
         for item in ordered.values()
     )
+    live_unverified_cells = " | ".join(
+        format_ratio(item.unverified, item.total - item.closed) for item in ordered.values()
+    )
     return "\n".join(
         [
             "# 적재 데이터 품질",
             "",
-            f"- 기준일: {today.isoformat()} (Asia/Seoul). "
-            "마감은 신청 종료일이 기준일보다 이전인 정책.",
+            f"- 기준일: {today.isoformat()} (Asia/Seoul).",
+            "- 마감: 신청 종료일이나 사업 종료일이 기준일보다 이전. "
+            "사업기간 문구는 계속 사업 표현이 없을 때만 마지막 연도 12월 31일을 종료일로 본다.",
+            "- 신청 가능: 특정 기간은 신청 기간 안, 상시는 사업 종료 전. "
+            "신청기간 확인 필요: 신청기간 미지정이고 사업도 끝나지 않은 정책.",
             "- 서울·경기: 시도 코드 11 또는 41을 포함.",
             f"- 지역 무관: 시군구 코드 {REGION_FREE_MIN_SIGUNGU}개 이상. "
             "단일 시도는 시군구 48개 이하이고, 전국 정책은 242~256개에 몰려 있다.",
@@ -295,6 +326,7 @@ def render_markdown(
             f"| 정책 수 | {counts} |",
             ratio_rows,
             f"| 지원 내용 짧거나 없음 ({SHORT_SUPPORT_CHARS}자 미만) | {brief_cells} |",
+            f"| 마감 제외 후보 중 신청기간 확인 필요 | {live_unverified_cells} |",
             "",
             "## 적금",
             "",
@@ -335,7 +367,11 @@ def _policy_select():
         Policy.age_limited,
         Policy.earn_cond_code,
         Policy.job_codes,
+        Policy.apply_period_code,
+        Policy.apply_start,
         Policy.apply_end,
+        Policy.biz_start,
+        Policy.biz_end,
         Policy.support_content,
     )
 

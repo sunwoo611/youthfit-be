@@ -4,15 +4,13 @@ DB 조회 없이 순수 함수를 검증하고, DB가 있으면 조회 경로도
 """
 
 import json
-from collections.abc import AsyncIterator
 from datetime import date
 from pathlib import Path
 
 import pytest
-from sqlalchemy import delete, insert, text
-from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine
+from sqlalchemy import insert
+from sqlalchemy.ext.asyncio import AsyncConnection
 
-from app.core.config import get_settings
 from app.ingest import codes
 from app.ingest.normalize import normalize_policy, normalize_saving_product
 from app.ingest.report import (
@@ -29,7 +27,7 @@ from app.ingest.report import (
     policy_groups,
     render_markdown,
 )
-from app.models import FinancialCompany, Policy, SavingProduct, SavingProductOption
+from app.models import FinancialCompany, Policy, SavingProduct
 
 SAMPLES = Path(__file__).resolve().parents[1] / "docs" / "data-samples"
 
@@ -263,42 +261,14 @@ def test_aggregate_savings_counts_youth_and_nonblank_homepage():
     assert stats.homepage_mapped == 1
 
 
-@pytest.fixture
-async def conn() -> AsyncIterator[AsyncConnection]:
-    url = get_settings().database_url
-    if not url:
-        pytest.skip("DATABASE_URL 미설정")
-    engine = create_async_engine(url, connect_args={"timeout": 2})
-    try:
-        connection = await engine.connect()
-    except (OSError, TimeoutError) as exc:
-        await engine.dispose()
-        pytest.skip(f"DB 연결 불가: {type(exc).__name__}")
-    trans = await connection.begin()
-    try:
-        if await connection.scalar(text("SELECT to_regclass('public.policies')")) is None:
-            pytest.skip("스키마 미적용 (uv run alembic upgrade head)")
-        for table in (
-            SavingProductOption.__table__,
-            SavingProduct.__table__,
-            FinancialCompany.__table__,
-            Policy.__table__,
-        ):
-            await connection.execute(delete(table))
-        yield connection
-    finally:
-        await trans.rollback()
-        await connection.close()
-        await engine.dispose()
-
-
 def _sample_policy(plcy_no: str) -> dict:
     body = json.loads((SAMPLES / "ontong-getPlcy-sample.json").read_text(encoding="utf-8"))
     raw = {**body["result"]["youthPolicyList"][0], "plcyNo": plcy_no}
     return normalize_policy(raw)
 
 
-async def test_load_report_reads_policy_and_saving_rows(conn: AsyncConnection):
+async def test_load_report_reads_policy_and_saving_rows(db_conn: AsyncConnection):
+    conn = db_conn
     policy = _sample_policy("QR-1")
     policy["sido_codes"] = ["11"]
     policy["sigungu_codes"] = ["11110"]

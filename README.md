@@ -47,6 +47,13 @@ uv run python -m app.ingest --source fss     # 금감원만
 - 실행 상태: `success` / `partial` / `failed` / `cancelled`(Ctrl+C) / `abandoned`(6시간 넘게 종료 기록 없이 남은 실행, 다음 실행 시 정리).
 - 실패 시 종료 코드 1, 설정 누락 시 2.
 
+필드 채움률과 크롤링 필요성은 적재된 DB만 조회한다 (쓰기는 하지 않음).
+
+```powershell
+uv run python -m app.ingest.report
+uv run python -m app.ingest.report --today 2026-10-26
+```
+
 일 1회 스케줄링 예시 (등록은 각자 환경에서):
 
 ```powershell

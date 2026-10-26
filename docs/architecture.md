@@ -1,6 +1,6 @@
 # 아키텍처
 
-> 현재 구현 상태: 1차 Build(골격 + `/health`)까지. 점선 이후 구성요소는 계획 단계.
+> 현재 구현 상태: 스키마, 일 배치 적재, 필드 채움률 리포트까지. 1차 룰 필터 API는 이후.
 
 ## 처리 흐름
 
@@ -55,7 +55,9 @@ flowchart LR
 | `app/ingest/pipeline.py` | 수집 → 정규화(중복·실패 집계) → 소스별 단일 트랜잭션 적재, `ingest_runs` 기록 |
 | `app/ingest/loader.py` | `ON CONFLICT DO UPDATE` upsert(500행 배치), 미수집 행 삭제는 기존 행 5% 상한(근거: `decisions/003-ingest-prune-safety.md`), 적금 옵션은 받은 상품만 교체 |
 | `app/ingest/__main__.py` | 적재 CLI `uv run python -m app.ingest --source all\|ontong\|fss` |
-| `app/ingest/normalize.py` | 원문 → 모델 컬럼 dict 순수 함수 (공백 날짜, 신청기간 파싱, 시군구→시도, URL 검증, `is_youth`, 미등록 코드 집계) |
+| `app/ingest/report.py` | 필드 채움률 리포트 CLI `uv run python -m app.ingest.report` (읽기 전용, 크롤링 필요성 판단) |
+| `app/ingest/normalize.py` | 원문 → 모델 컬럼 dict 순수 함수 (공백 날짜, 신청기간·사업기간 파싱, 시군구→시도, URL 검증, `is_youth`, 미등록 코드 집계) |
+| `app/services/policy_status.py` | 정책 신청 가능 여부를 조회 시점에 판정 (신청 가능 / 신청 예정 / 마감 / 신청기간 확인 필요, 근거: `decisions/004-policy-availability.md`) |
 | `alembic/` | 마이그레이션 (async 템플릿, URL은 `Settings`에서 읽음) |
 | `compose.yaml` | 로컬 PostgreSQL 16 |
 
@@ -65,7 +67,7 @@ flowchart LR
 
 | 테이블 | 키 | 내용 |
 |------|------|------|
-| `policies` | `plcy_no` | 온통청년 정책. 대·중분류(배열), 나이·혼인·소득·취업상태·학력·특화·지역 코드, 신청기간, URL. GIN: `categories`, `sido_codes`, `job_codes` |
+| `policies` | `plcy_no` | 온통청년 정책. 대·중분류(배열), 나이·혼인·소득·취업상태·학력·특화·지역 코드, 신청기간, 사업기간(`biz_start`/`biz_end`), URL. GIN: `categories`, `sido_codes`, `job_codes` |
 | `financial_companies` | `fin_co_no` | 금감원 금융회사. `homepage_url`을 적금 공식 URL로 사용 |
 | `saving_products` | `(fin_co_no, fin_prdt_cd)` | 금감원 적금 기본 정보, `is_youth` 플래그 (회사 FK 없음) |
 | `saving_product_options` | `id`, 유니크 `(상품, rate_type, reserve_type, term_months)` | 기간·적립방식별 기본/최고 금리 |
@@ -75,3 +77,5 @@ flowchart LR
 
 - 2026-10-12: 초기 골격 작성
 - 2026-10-17: Alembic + 모델 5개, 첫 마이그레이션 추가
+- 2026-10-26: 적재 품질 리포트 CLI (`app/ingest/report.py`). 전체·서울·경기·지역 무관 필드 채움률과 크롤링 판단
+- 2026-10-26: 사업기간 컬럼(`biz_start`/`biz_end`) 추가, `app/services/policy_status.py`로 신청 가능 여부 판정

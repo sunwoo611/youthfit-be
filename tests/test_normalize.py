@@ -18,6 +18,7 @@ from app.ingest.normalize import (
     normalize_saving_option,
     normalize_saving_product,
     parse_apply_period,
+    parse_biz_period,
     parse_zip_codes,
 )
 from app.models import FinancialCompany, Policy, SavingProduct, SavingProductOption
@@ -99,6 +100,61 @@ def test_parse_apply_period(value, expected):
     assert parse_apply_period(value) == expected
 
 
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("2025.1.~2025.12.", date(2025, 12, 31)),
+        ("2025. 1. ~ 12.", date(2025, 12, 31)),
+        ("2026-01-01~2026-12-31", date(2026, 12, 31)),
+        ("2022. 3. ∼ 2027. 2.", date(2027, 12, 31)),
+        ("'25.9월 중 2일간/미정", date(2025, 12, 31)),
+        ("2025년 12월 31일", date(2025, 12, 31)),
+        ("2026-01-01~2999-12-31", date(2026, 12, 31)),
+        # 계속 진행되는 사업은 연도가 있어도 종료일을 두지 않는다
+        ("상시", None),
+        ("2018년 ~ 계속", None),
+        ("'22년 ~ 게", None),
+        ("'17~계", None),
+        ("'15년~", None),
+        ("2025. 1. ~", None),
+        ("2023. 7. ~ 현재", None),
+        ("2025. 1. ~ 예산소진시", None),
+        ("'25.7월 중(매년 1회, 연례적 시행)", None),
+        ("ㅇ 운영기간(연2회) - 동계 : 1,2월 중 ※ 2025 동계", None),
+        ("2024년 이후 신규모집 종료", None),
+        ("‘26. 하반기(초가을 경)", None),
+        # 연도가 없거나 형식이 깨진 문구
+        ("담당자 문의", None),
+        ("20265. 1. ~ 12.", None),
+        ("", None),
+        (None, None),
+    ],
+)
+def test_parse_biz_period_text_end(text, expected):
+    assert parse_biz_period({"bizPrdEtcCn": text}) == (None, expected)
+
+
+def test_parse_biz_period_prefers_date_fields():
+    raw = {
+        "bizPrdBgngYmd": "20260420",
+        "bizPrdEndYmd": "20260710",
+        "bizPrdEtcCn": "2025.1.~2025.12.",
+    }
+    assert parse_biz_period(raw) == (date(2026, 4, 20), date(2026, 7, 10))
+
+
+def test_parse_biz_period_blank_date_falls_back_to_text():
+    raw = {"bizPrdBgngYmd": "        ", "bizPrdEndYmd": "        ", "bizPrdEtcCn": "2025년"}
+    assert parse_biz_period(raw) == (None, date(2025, 12, 31))
+
+
+def test_parse_biz_period_out_of_range_end_is_open():
+    assert parse_biz_period({"bizPrdBgngYmd": "20260101", "bizPrdEndYmd": "29991231"}) == (
+        date(2026, 1, 1),
+        None,
+    )
+
+
 def test_parse_zip_codes_derives_sido():
     sigungu, sido = parse_zip_codes("11680, 11650,41135,11680,abc")
     assert sigungu == ["11680", "11650", "41135"]
@@ -116,6 +172,7 @@ def test_normalize_policy_sample_fixed_period(ontong_policies):
     assert row["subcategories"] == ["취업"]
     assert row["apply_period_code"] == codes.APPLY_PERIOD_FIXED
     assert (row["apply_start"], row["apply_end"]) == (date(2026, 5, 18), date(2026, 6, 30))
+    assert (row["biz_start"], row["biz_end"]) == (date(2026, 4, 20), date(2026, 7, 10))
     assert row["job_codes"] == ["0013003"]
     assert row["marriage_code"] == codes.MARRIAGE_ANY
     assert row["earn_cond_code"] == codes.EARN_ANY
@@ -147,6 +204,7 @@ def test_normalize_policy_blank_dates_and_etc_income(ontong_policies):
     row = normalize_policy(_policy_by_no(ontong_policies, "113967"))
     assert row["apply_period_code"] == codes.APPLY_PERIOD_ALWAYS
     assert (row["apply_start"], row["apply_end"]) == (None, None)
+    assert (row["biz_start"], row["biz_end"]) == (None, date(2026, 12, 31))
     assert row["ref_urls"] == ["https://youth.chungnam.go.kr/web/main/main"]
 
     etc = normalize_policy(_policy_by_no(ontong_policies, "113965"))

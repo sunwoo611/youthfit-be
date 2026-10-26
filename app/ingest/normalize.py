@@ -19,6 +19,13 @@ MAX_YEAR = 2100
 _PLACEHOLDERS = frozenset({"-", "--", "null", "NULL"})
 
 _DATE_RANGE = re.compile(r"(\d{8})\s*~\s*(\d{8})")
+_YEAR4 = re.compile(r"(?<!\d)(20\d{2})(?!\d)")
+_YEAR2 = re.compile(r"['‘’`](\d{2})(?!\d)")
+# 계속 사업을 뜻하는 사업기간 문구. 하나라도 있으면 연도가 있어도 종료일을 두지 않는다.
+_BIZ_ONGOING = re.compile(
+    r"상시|연중|계속|현재|이후|예산|소진|소지|매년|매해|매월|매분기|연례|수시|반기|분기"
+    r"|연\s*\d+\s*회|[~∼]\s*$|[계게]\s*$"
+)
 _POLICY_CODE = re.compile(r"^\d{7}$")
 _SIGUNGU_CODE = re.compile(r"^\d{5}$")
 
@@ -112,6 +119,32 @@ def parse_apply_period(value: Any) -> tuple[date | None, date | None]:
     return (min(starts) if starts else None, max(ends) if ends else None)
 
 
+def _biz_text_end(value: Any) -> date | None:
+    """사업기간 문구 → 마지막 연도 12월 31일. 계속 사업이거나 연도가 없으면 None.
+
+    월 단위 표기는 형식이 제각각이라 연 단위 상한만 쓴다(종료를 늦게 잡는 쪽으로 보수적).
+    """
+    text = clean_text(value)
+    if text is None or _BIZ_ONGOING.search(text):
+        return None
+    years = [int(y) for y in _YEAR4.findall(text)]
+    years += [2000 + int(y) for y in _YEAR2.findall(text)]
+    years = [y for y in years if MIN_YEAR <= y <= MAX_YEAR]
+    return date(max(years), 12, 31) if years else None
+
+
+def parse_biz_period(raw: dict[str, Any]) -> tuple[date | None, date | None]:
+    """사업기간 → (시작, 종료).
+
+    날짜 필드를 우선하고, 종료일 칸이 비어 있으면 문구(bizPrdEtcCn)에서 구한다.
+    """
+    start = parse_yyyymmdd(raw.get("bizPrdBgngYmd"))
+    end = parse_yyyymmdd(raw.get("bizPrdEndYmd"))
+    if end is None and clean_text(raw.get("bizPrdEndYmd")) is None:
+        end = _biz_text_end(raw.get("bizPrdEtcCn"))
+    return start, end
+
+
 def parse_kst_datetime(value: Any) -> datetime | None:
     text = clean_text(value)
     if text is None:
@@ -195,6 +228,7 @@ def normalize_policy(raw: dict[str, Any]) -> dict[str, Any]:
 
     sigungu_codes, sido_codes = parse_zip_codes(raw.get("zipCd"))
     apply_start, apply_end = parse_apply_period(raw.get("aplyYmd"))
+    biz_start, biz_end = parse_biz_period(raw)
     ref_urls = [
         url
         for url in dict.fromkeys(clean_url(raw.get(k)) for k in ("refUrlAddr1", "refUrlAddr2"))
@@ -226,6 +260,8 @@ def normalize_policy(raw: dict[str, Any]) -> dict[str, Any]:
         "apply_period_code": _code(raw.get("aplyPrdSeCd")),
         "apply_start": apply_start,
         "apply_end": apply_end,
+        "biz_start": biz_start,
+        "biz_end": biz_end,
         "apply_url": clean_url(raw.get("aplyUrlAddr")),
         "ref_urls": ref_urls,
         "apply_method": clean_text(raw.get("plcyAplyMthdCn")),

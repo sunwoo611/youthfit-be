@@ -55,6 +55,9 @@ class Policy(IngestedAtMixin, Base):
     apply_period_code: Mapped[str | None] = mapped_column(String(10))
     apply_start: Mapped[date | None] = mapped_column(Date)
     apply_end: Mapped[date | None] = mapped_column(Date)
+    # 사업기간. 문구형은 마지막 연도 12월 31일, 계속 사업은 None
+    biz_start: Mapped[date | None] = mapped_column(Date)
+    biz_end: Mapped[date | None] = mapped_column(Date)
     apply_url: Mapped[str | None] = mapped_column(Text)
     ref_urls: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False, server_default="{}")
     apply_method: Mapped[str | None] = mapped_column(Text)
@@ -72,4 +75,5 @@ class Policy(IngestedAtMixin, Base):
         Index("ix_policies_sido_codes", "sido_codes", postgresql_using="gin"),
         Index("ix_policies_job_codes", "job_codes", postgresql_using="gin"),
         Index("ix_policies_apply_end", "apply_end"),
+        Index("ix_policies_biz_end", "biz_end"),
     )

@@ -11,6 +11,7 @@ from typing import Any
 
 from sqlalchemy import (
     ColumnElement,
+    RowMapping,
     Select,
     and_,
     case,
@@ -272,7 +273,9 @@ def _policy_filters(
     return filters
 
 
-def policy_query(conditions: AppliedConditions, today: date, limit: int = POLICY_LIMIT) -> Select:
+def policy_query(
+    conditions: AppliedConditions, today: date, limit: int | None = POLICY_LIMIT
+) -> Select:
     status = availability_expr(today)
     status_rank = case(
         *((status == s.value, rank) for s, rank in _STATUS_RANK.items()),
@@ -450,14 +453,33 @@ async def find_candidates(
 async def search_candidates(
     conn: AsyncConnection, conditions: AppliedConditions, today: date
 ) -> CandidateResponse:
-    policy_rows = (await conn.execute(policy_query(conditions, today))).mappings().all()
+    rows = await fetch_policy_rows(conn, conditions, today)
+    return await build_response(conn, conditions, today, rows)
+
+
+async def fetch_policy_rows(
+    conn: AsyncConnection,
+    conditions: AppliedConditions,
+    today: date,
+    limit: int | None = POLICY_LIMIT,
+) -> Sequence[RowMapping]:
+    return (await conn.execute(policy_query(conditions, today, limit))).mappings().all()
+
+
+async def build_response(
+    conn: AsyncConnection,
+    conditions: AppliedConditions,
+    today: date,
+    policy_rows: Sequence[Mapping[str, Any]],
+) -> CandidateResponse:
+    """정책 카드는 정렬된 행의 앞 POLICY_LIMIT 건만 만든다."""
     saving_rows = (await conn.execute(saving_query())).mappings().all()
     return CandidateResponse(
         as_of=today,
         conditions=conditions,
         policies=PolicyCandidates(
             total=policy_rows[0]["total"] if policy_rows else 0,
-            items=[_policy_candidate(row) for row in policy_rows],
+            items=[_policy_candidate(row) for row in policy_rows[:POLICY_LIMIT]],
         ),
         savings=SavingCandidates(
             total=saving_rows[0]["total"] if saving_rows else 0,

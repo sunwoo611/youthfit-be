@@ -10,6 +10,7 @@ from app.schemas.candidates import AppliedConditions, IncomeBucket, Marriage, Sc
 from app.schemas.sessions import QuestionVariable
 from app.services import question_engine
 from app.services.candidate_service import (
+    REGION_NATIONAL,
     REGION_SIDO,
     REGION_SIGUNGU,
     SCHOOL_CODE,
@@ -151,6 +152,21 @@ def test_variables_below_threshold_are_not_asked():
     assert _variables([], _conditions()) == []
 
 
+def test_tied_scores_keep_registry_order():
+    # 기혼 전용 7건(2개 중 1개 선택지에서 빠짐)과 대학 재학 전용 4건(8개 중 7개)이 둘 다 0.175.
+    rows = [
+        *(_row(marriage_code=MARRIED) for _ in range(7)),
+        *(_row(school_codes=[COLLEGE_ENROLLED]) for _ in range(4)),
+        *(_row() for _ in range(9)),
+    ]
+    marriage, school = REGISTRY[QuestionVariable.MARRIAGE], REGISTRY[QuestionVariable.SCHOOL]
+    base = _conditions()
+    assert removal_score(rows, marriage, marriage.options(base))[0] == pytest.approx(
+        removal_score(rows, school, school.options(base))[0]
+    )
+    assert _variables(rows, base) == [QuestionVariable.MARRIAGE, QuestionVariable.SCHOOL]
+
+
 def test_question_count_is_capped(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(question_engine, "MAX_QUESTIONS", 2)
     assert _variables(_mixed_rows(), _conditions()) == [
@@ -225,32 +241,52 @@ def test_apply_answer_rejects_values_outside_options(variable: QuestionVariable,
 
 # --- DB 통합: 파이썬 판정 == SQL 필터 ---
 
+MARRIAGES = [None, codes.MARRIAGE_ANY, MARRIED, SINGLE]
+SCHOOLS = [
+    [],
+    [codes.SCHOOL_ANY],
+    [codes.SCHOOL_ETC],
+    [COLLEGE_ENROLLED],
+    [HIGH_SCHOOL_GRADUATED, "0049007"],
+    [COLLEGE_ENROLLED, codes.SCHOOL_ETC],
+]
+EARNS = [
+    (None, None),
+    (codes.EARN_ANY, None),
+    ("0043003", 2000),
+    (codes.EARN_RANGE, None),
+    (codes.EARN_RANGE, 999),
+    (codes.EARN_RANGE, 1000),
+    (codes.EARN_RANGE, 3000),
+    (codes.EARN_RANGE, 5000),
+    (codes.EARN_RANGE, 7000),
+    (codes.EARN_RANGE, 20000),
+    (codes.EARN_RANGE, 20001),
+]
+# 시도별 (sido_codes, sigungu_codes). 전국 정책은 여러 시도에 걸쳐야 시도 시군구 수 계산에서 빠진다.
+NATIONAL_REGION = (list(codes.SIDO), [f"{i:05d}" for i in range(codes.REGION_FREE_MIN_SIGUNGU)])
+REGIONS: dict[str, list[tuple[list[str], list[str]]]] = {
+    "11": [
+        (["11"], list(sigungu.SIGUNGU["11"])),
+        (["11"], ["11110"]),
+        (["11"], ["11140", "11200"]),
+        (["11"], ["11000"]),
+        NATIONAL_REGION,
+    ],
+    # 구가 있는 시는 정책에 시 코드(41110)와 구 코드(41113)가 따로 온다.
+    "41": [
+        (["41"], list(sigungu.SIGUNGU["41"])),
+        (["41"], ["41113"]),
+        (["41"], ["41110"]),
+        (["41"], ["41595", "41130"]),
+        (["41"], ["41000"]),
+        NATIONAL_REGION,
+    ],
+}
 
-async def test_python_keeps_matches_sql_filters(db_conn: AsyncConnection):
-    seoul_all = list(sigungu.SIGUNGU["11"])
-    marriages = [None, codes.MARRIAGE_ANY, MARRIED, SINGLE]
-    schools = [
-        [],
-        [codes.SCHOOL_ANY],
-        [codes.SCHOOL_ETC],
-        [COLLEGE_ENROLLED],
-        [HIGH_SCHOOL_GRADUATED, "0049007"],
-        [COLLEGE_ENROLLED, codes.SCHOOL_ETC],
-    ]
-    earns = [
-        (None, None),
-        (codes.EARN_ANY, None),
-        ("0043003", 2000),
-        (codes.EARN_RANGE, None),
-        (codes.EARN_RANGE, 999),
-        (codes.EARN_RANGE, 1000),
-        (codes.EARN_RANGE, 3000),
-        (codes.EARN_RANGE, 5000),
-        (codes.EARN_RANGE, 7000),
-        (codes.EARN_RANGE, 20000),
-        (codes.EARN_RANGE, 20001),
-    ]
-    regions = [seoul_all, ["11110"], ["11140", "11200"], ["11000"]]
+
+async def _equivalence_candidates(db_conn: AsyncConnection, sido_code: str) -> list[dict]:
+    """혼인·학력·소득·지역 값의 모든 조합을 넣고, 답이 없을 때의 후보 전부를 돌려준다."""
     rows = [
         _policy(
             f"QE-{i:04d}",
@@ -258,24 +294,60 @@ async def test_python_keeps_matches_sql_filters(db_conn: AsyncConnection):
             school_codes=school,
             earn_cond_code=earn_code,
             earn_max=earn_max,
-            sigungu_codes=region,
+            sido_codes=sido_codes,
+            sigungu_codes=sigungu_codes,
         )
-        for i, (marriage, school, (earn_code, earn_max), region) in enumerate(
-            itertools.product(marriages, schools, earns, regions)
+        for i, (marriage, school, (earn_code, earn_max), (sido_codes, sigungu_codes)) in enumerate(
+            itertools.product(MARRIAGES, SCHOOLS, EARNS, REGIONS[sido_code])
         )
     ]
     await _insert_policies(db_conn, *rows)
-
-    base = _conditions()
-    limit = len(rows)
-    candidates = (await db_conn.execute(policy_query(base, TODAY, limit))).mappings().all()
+    query = policy_query(_conditions(sido_code), TODAY, len(rows))
+    candidates = [dict(row) for row in (await db_conn.execute(query)).mappings()]
     assert len(candidates) == len(rows)
-    assert {row["region_rank"] for row in candidates} == {REGION_SIDO, REGION_SIGUNGU}
+    assert {row["region_rank"] for row in candidates} == {
+        REGION_SIDO,
+        REGION_NATIONAL,
+        REGION_SIGUNGU,
+    }
+    return candidates
 
+
+async def _sql_plcy_nos(db_conn: AsyncConnection, conditions: AppliedConditions) -> set[str]:
+    result = await db_conn.execute(policy_query(conditions, TODAY, limit=10_000))
+    return {row["plcy_no"] for row in result.mappings()}
+
+
+@pytest.mark.parametrize("sido_code", ["11", "41"])
+async def test_python_keeps_matches_sql_filters(db_conn: AsyncConnection, sido_code: str):
+    candidates = await _equivalence_candidates(db_conn, sido_code)
+    base = _conditions(sido_code)
     for variable in REGISTRY.values():
         for option in variable.options(base):
-            answered = apply_answer(base, variable.name, option.value)
-            result = await db_conn.execute(policy_query(answered, TODAY, limit))
-            sql = {row["plcy_no"] for row in result.mappings()}
+            sql = await _sql_plcy_nos(db_conn, apply_answer(base, variable.name, option.value))
             python = {row["plcy_no"] for row in candidates if variable.keeps(row, option.value)}
             assert sql == python, (variable.name, option.value)
+
+
+async def test_combined_answers_match_all_python_keeps(db_conn: AsyncConnection):
+    candidates = await _equivalence_candidates(db_conn, "41")
+    base = _conditions("41")
+    options = {name: variable.options(base) for name, variable in REGISTRY.items()}
+    fixed = (QuestionVariable.MARRIAGE, QuestionVariable.SCHOOL, QuestionVariable.INCOME_BUCKET)
+    sigungu_options = options[QuestionVariable.SIGUNGU]
+    combos = itertools.product(*(options[name] for name in fixed))
+    for i, combo in enumerate(combos):
+        answers = [
+            *zip(fixed, (option.value for option in combo), strict=True),
+            (QuestionVariable.SIGUNGU, sigungu_options[i % len(sigungu_options)].value),
+        ]
+        conditions = base
+        for name, value in answers:
+            conditions = apply_answer(conditions, name, value)
+        sql = await _sql_plcy_nos(db_conn, conditions)
+        python = {
+            row["plcy_no"]
+            for row in candidates
+            if all(REGISTRY[name].keeps(row, value) for name, value in answers)
+        }
+        assert sql == python, answers

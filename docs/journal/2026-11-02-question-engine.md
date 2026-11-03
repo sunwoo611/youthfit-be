@@ -102,4 +102,4 @@
 
 ## 이력서 반영 여부
 
-- [ ] `resume-bullets.md` 에 추가함
+- [x] `resume-bullets.md` 에 추가함 (6번). 결정 근거는 [ADR 008](../decisions/008-question-variable-selection.md)

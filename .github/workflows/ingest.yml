@@ -35,3 +35,6 @@ jobs:
           enable-cache: true
       - run: uv sync --locked --no-dev
       - run: uv run python -m app.ingest --source "$INGEST_SOURCE"
+      # 적재가 실패해도 오래된 세션은 지운다.
+      - if: ${{ !cancelled() }}
+        run: uv run python -m app.jobs.cleanup_sessions

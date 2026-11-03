@@ -20,7 +20,7 @@ from app.models import QuestionSession
 from app.schemas.candidates import AppliedConditions, Marriage, School
 from app.schemas.sessions import Answer, AnswerRequest, Question, QuestionVariable
 from app.services.question_engine import REGISTRY
-from app.services.session_service import InvalidAnswerError, apply_answers
+from app.services.session_service import InvalidAnswerError, apply_answers, delete_old_sessions
 from tests.test_candidates import FUTURE, TODAY, _insert_policies, _policy
 
 QUERY = "서울 사는 25살 취준생"
@@ -331,6 +331,20 @@ async def test_missing_or_expired_session_is_404(client: AsyncClient, db_conn: A
     )
     assert (await client.get(f"/v1/sessions/{session_id}")).status_code == 404
     assert (await _answer(client, session_id, {"q2": "single"})).status_code == 404
+
+
+async def test_delete_old_sessions_keeps_recent_ones(client: AsyncClient, db_conn: AsyncConnection):
+    ids = [(await _create(client))["session_id"] for _ in range(3)]
+    for session_id, age in zip(ids, (31, 29, 0), strict=True):
+        await db_conn.execute(
+            update(SESSIONS)
+            .where(SESSIONS.c.id == uuid.UUID(session_id))
+            .values(created_at=func.now() - timedelta(days=age))
+        )
+
+    assert await delete_old_sessions(db_conn, timedelta(days=30)) == 1
+    remaining = (await db_conn.execute(select(SESSIONS.c.id))).scalars().all()
+    assert {str(session_id) for session_id in remaining} == set(ids[1:])
 
 
 @pytest.mark.parametrize("payload", [{}, {"query": "   "}, {"query": QUERY, "sido_code": "99"}])

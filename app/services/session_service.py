@@ -5,10 +5,10 @@
 
 import uuid
 from collections.abc import Mapping, Sequence
-from datetime import date
+from datetime import date, timedelta
 from typing import Any
 
-from sqlalchemy import func, insert, select, update
+from sqlalchemy import delete, func, insert, select, update
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from app.models import QuestionSession
@@ -127,6 +127,14 @@ async def get_session(conn: AsyncConnection, session_id: uuid.UUID) -> SessionRe
         answers=answers,
         candidates=await search_candidates(conn, conditions, session["as_of"]),
     )
+
+
+async def delete_old_sessions(conn: AsyncConnection, retention: timedelta) -> int:
+    """생성 후 보관 기간이 지난 세션을 지운다. 만료(24시간)와 달리 분석 데이터까지 없앤다."""
+    result = await conn.execute(
+        delete(SESSIONS).where(SESSIONS.c.created_at < func.now() - retention)
+    )
+    return result.rowcount
 
 
 async def answer_session(

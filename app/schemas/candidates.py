@@ -2,9 +2,9 @@
 
 from datetime import date
 from enum import StrEnum
-from typing import Literal
+from typing import Literal, Self
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.ingest import codes
 from app.services.policy_status import Availability
@@ -28,6 +28,31 @@ class Interest(StrEnum):
     EDUCATION = "education"
     WELFARE = "welfare"
     PARTICIPATION = "participation"
+
+
+class Marriage(StrEnum):
+    MARRIED = "married"
+    SINGLE = "single"
+
+
+class School(StrEnum):
+    BELOW_HIGH_SCHOOL = "below_high_school"
+    HIGH_SCHOOL_ENROLLED = "high_school_enrolled"
+    HIGH_SCHOOL_EXPECTED = "high_school_expected"
+    HIGH_SCHOOL_GRADUATED = "high_school_graduated"
+    COLLEGE_ENROLLED = "college_enrolled"
+    COLLEGE_EXPECTED = "college_expected"
+    COLLEGE_GRADUATED = "college_graduated"
+    GRADUATE_SCHOOL = "graduate_school"
+
+
+class IncomeBucket(StrEnum):
+    """본인 연소득 구간 (만원)."""
+
+    UP_TO_3000 = "up_to_3000"
+    UP_TO_5000 = "up_to_5000"
+    UP_TO_7000 = "up_to_7000"
+    OVER_7000 = "over_7000"
 
 
 class LinkSource(StrEnum):
@@ -64,6 +89,20 @@ class AppliedConditions(BaseModel):
     employment_status: EmploymentStatus | None
     interests: list[Interest]
     from_query: list[str] = Field(description="query 에서 추출해 채운 필드 이름")
+    sigungu_codes: list[str] = Field(
+        default_factory=list,
+        description="거주 시군구의 법정 코드(5자리). 구가 있는 시는 구 코드를 모두 담는다.",
+    )
+    marriage: Marriage | None = None
+    school: School | None = None
+    income_bucket: IncomeBucket | None = None
+
+    @model_validator(mode="after")
+    def _sigungu_in_sido(self) -> Self:
+        for code in self.sigungu_codes:
+            if len(code) != 5 or not code.isdigit() or code[:2] != self.sido_code:
+                raise ValueError(f"시도 {self.sido_code} 에 속하지 않는 시군구 코드: {code}")
+        return self
 
 
 class PolicyEligibility(BaseModel):

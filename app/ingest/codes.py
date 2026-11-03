@@ -48,6 +48,8 @@ SCHOOL: dict[str, str] = {
     "0049010": "제한없음",
 }
 SCHOOL_ANY = "0049010"
+# 학력 제한이 없는 정책에도 붙어 있어 제한으로 보지 않는다 (2026-11-02 journal).
+SCHOOL_ETC = "0049009"
 
 MAJOR: dict[str, str] = {
     "0011001": "인문계열",

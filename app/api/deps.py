@@ -1,7 +1,8 @@
 from collections.abc import AsyncIterator
 from datetime import date, datetime
+from typing import Annotated
 
-from fastapi import HTTPException, status
+from fastapi import Depends, HTTPException, status
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncConnection
 
@@ -22,6 +23,17 @@ async def get_db_connection() -> AsyncIterator[AsyncConnection]:
         yield conn
     finally:
         await conn.close()
+
+
+async def get_db_transaction(
+    conn: Annotated[AsyncConnection, Depends(get_db_connection)],
+) -> AsyncIterator[AsyncConnection]:
+    """쓰기용 연결. 경로 함수가 예외 없이 끝나면 커밋하고, 예외면 롤백한다.
+
+    커밋 실패가 응답에 드러나도록 `Depends(get_db_transaction, scope="function")` 로 쓴다.
+    """
+    async with conn.begin():
+        yield conn
 
 
 def get_today() -> date:

@@ -18,6 +18,7 @@ EXPECTED_TABLES = {
     "saving_products",
     "saving_product_options",
     "ingest_runs",
+    "sessions",
 }
 
 

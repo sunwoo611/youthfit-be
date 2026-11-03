@@ -75,6 +75,25 @@ SCHOOL_CODE: dict[School, str] = {
     School.GRADUATE_SCHOOL: "0049008",
 }
 
+# 답이 함께 해당하는 학력 코드. 졸업 예정자는 재학 중이고, 석·박사는 학사를 가진다.
+# 재학 → 고졸, 대졸 → 고졸로는 넓히지 않는다. 재학생 제외(국민취업지원제도 등)와
+# 고졸 전용 정책이 그 차이로 구분돼 있다 (2026-11-02 journal).
+SCHOOL_MATCH: dict[School, tuple[str, ...]] = {
+    **{school: (code,) for school, code in SCHOOL_CODE.items()},
+    School.HIGH_SCHOOL_EXPECTED: (
+        SCHOOL_CODE[School.HIGH_SCHOOL_EXPECTED],
+        SCHOOL_CODE[School.HIGH_SCHOOL_ENROLLED],
+    ),
+    School.COLLEGE_EXPECTED: (
+        SCHOOL_CODE[School.COLLEGE_EXPECTED],
+        SCHOOL_CODE[School.COLLEGE_ENROLLED],
+    ),
+    School.GRADUATE_SCHOOL: (
+        SCHOOL_CODE[School.GRADUATE_SCHOOL],
+        SCHOOL_CODE[School.COLLEGE_GRADUATED],
+    ),
+}
+
 # 구간 하한(만원, 초과). 소득 상한이 이 값 이하인 정책은 확실히 해당하지 않는다.
 INCOME_BUCKET_FLOOR: dict[IncomeBucket, int] = {
     IncomeBucket.UP_TO_3000: 0,
@@ -255,7 +274,7 @@ def _policy_filters(
             or_(
                 func.cardinality(Policy.school_codes) == 0,
                 Policy.school_codes.overlap(
-                    [codes.SCHOOL_ANY, codes.SCHOOL_ETC, SCHOOL_CODE[conditions.school]]
+                    [codes.SCHOOL_ANY, codes.SCHOOL_ETC, *SCHOOL_MATCH[conditions.school]]
                 ),
             )
         )

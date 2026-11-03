@@ -19,6 +19,7 @@ from app.services.candidate_service import (
     MARRIAGE_CODE,
     REGION_SIGUNGU,
     SCHOOL_CODE,
+    SCHOOL_MATCH,
 )
 
 Row = Mapping[str, Any]
@@ -52,7 +53,7 @@ def _keeps_marriage(row: Row, value: str) -> bool:
 
 
 def _keeps_school(row: Row, value: str) -> bool:
-    allowed = {codes.SCHOOL_ANY, codes.SCHOOL_ETC, SCHOOL_CODE[School(value)]}
+    allowed = {codes.SCHOOL_ANY, codes.SCHOOL_ETC, *SCHOOL_MATCH[School(value)]}
     return not row["school_codes"] or not allowed.isdisjoint(row["school_codes"])
 
 

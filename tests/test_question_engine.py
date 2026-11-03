@@ -88,6 +88,23 @@ def test_school_etc_and_full_listing_are_not_restrictions():
     assert removal_score(rows, variable, variable.options(_conditions())) == (0.0, 0)
 
 
+@pytest.mark.parametrize(
+    ("school", "kept"),
+    [
+        (School.COLLEGE_EXPECTED, {COLLEGE_ENROLLED, "0049006"}),
+        (School.GRADUATE_SCHOOL, {"0049007", "0049008"}),
+        (School.COLLEGE_ENROLLED, {COLLEGE_ENROLLED}),
+        (School.COLLEGE_GRADUATED, {"0049007"}),
+    ],
+)
+def test_school_answer_keeps_contained_statuses_only(school: School, kept: set[str]):
+    variable = REGISTRY[QuestionVariable.SCHOOL]
+    singles = [HIGH_SCHOOL_GRADUATED, COLLEGE_ENROLLED, "0049006", "0049007", "0049008"]
+    assert {
+        code for code in singles if variable.keeps(_row(school_codes=[code]), school.value)
+    } == kept
+
+
 def test_income_uses_only_trusted_range_max():
     rows = [
         _row(earn_cond_code=codes.EARN_RANGE, earn_max=5000),
@@ -153,11 +170,12 @@ def test_variables_below_threshold_are_not_asked():
 
 
 def test_tied_scores_keep_registry_order():
-    # 기혼 전용 7건(2개 중 1개 선택지에서 빠짐)과 대학 재학 전용 4건(8개 중 7개)이 둘 다 0.175.
+    # 기혼 전용 6건(2개 중 1개 선택지에서 빠짐)과 대학 재학 전용 4건(대학 재학·대졸 예정을 뺀
+    # 8개 중 6개)이 둘 다 0.15.
     rows = [
-        *(_row(marriage_code=MARRIED) for _ in range(7)),
+        *(_row(marriage_code=MARRIED) for _ in range(6)),
         *(_row(school_codes=[COLLEGE_ENROLLED]) for _ in range(4)),
-        *(_row() for _ in range(9)),
+        *(_row() for _ in range(10)),
     ]
     marriage, school = REGISTRY[QuestionVariable.MARRIAGE], REGISTRY[QuestionVariable.SCHOOL]
     base = _conditions()
@@ -249,6 +267,9 @@ SCHOOLS = [
     [COLLEGE_ENROLLED],
     [HIGH_SCHOOL_GRADUATED, "0049007"],
     [COLLEGE_ENROLLED, codes.SCHOOL_ETC],
+    ["0049002"],
+    ["0049007"],
+    ["0049003", HIGH_SCHOOL_GRADUATED, "0049006", "0049007"],
 ]
 EARNS = [
     (None, None),

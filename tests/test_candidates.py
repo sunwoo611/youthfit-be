@@ -264,6 +264,34 @@ async def test_school_filter_treats_etc_as_unrestricted(db_conn: AsyncConnection
     }
 
 
+@pytest.mark.parametrize(
+    ("school", "expected"),
+    [
+        # 졸업 예정자는 재학 중이라 재학 대상 정책도 받는다.
+        (School.HIGH_SCHOOL_EXPECTED, {"S-HS-ENROLLED", "S-GRADUATES"}),
+        (School.COLLEGE_EXPECTED, {"S-COLLEGE-ENROLLED", "S-GRADUATES"}),
+        # 석·박사는 학사를 가지므로 대졸 대상(특성화대학원 등)을 받는다.
+        (School.GRADUATE_SCHOOL, {"S-COLLEGE-GRADUATED", "S-GRADUATES"}),
+        # 재학생은 고졸로 넓히지 않는다(재학생 제외 정책이 대학 재학만 빼고 나열).
+        (School.COLLEGE_ENROLLED, {"S-COLLEGE-ENROLLED"}),
+        # 대졸은 고졸로 넓히지 않는다(고졸 전용 정책).
+        (School.COLLEGE_GRADUATED, {"S-COLLEGE-GRADUATED", "S-GRADUATES"}),
+    ],
+)
+async def test_school_answer_covers_contained_statuses_only(
+    db_conn: AsyncConnection, school: School, expected: set[str]
+):
+    await _insert_policies(
+        db_conn,
+        _policy("S-HS-ENROLLED", school_codes=["0049002"]),
+        _policy("S-HS-ONLY", school_codes=["0049004"]),
+        _policy("S-COLLEGE-ENROLLED", school_codes=["0049005"]),
+        _policy("S-COLLEGE-GRADUATED", school_codes=["0049007"]),
+        _policy("S-GRADUATES", school_codes=["0049003", "0049004", "0049006", "0049007"]),
+    )
+    assert set(await _searched_nos(db_conn, _conditions(school=school))) == expected
+
+
 async def test_income_filter_uses_only_trusted_range_max(db_conn: AsyncConnection):
     def earn(code: str | None, earn_max: int | None) -> dict:
         return {"earn_cond_code": code, "earn_max": earn_max}

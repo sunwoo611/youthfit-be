@@ -13,6 +13,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from app.api.deps import get_db_connection, get_db_transaction, get_today
+from app.api.v1.sessions import ANSWER_LIMIT, CREATE_LIMIT
 from app.ingest import sigungu
 from app.main import app
 from app.models import QuestionSession
@@ -153,6 +154,8 @@ async def client(db_conn: AsyncConnection) -> AsyncIterator[AsyncClient]:
     app.dependency_overrides[get_db_connection] = _conn
     app.dependency_overrides[get_db_transaction] = _conn
     app.dependency_overrides[get_today] = lambda: TODAY
+    for limit in (CREATE_LIMIT, ANSWER_LIMIT):
+        app.dependency_overrides[limit] = lambda: None
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
             yield c

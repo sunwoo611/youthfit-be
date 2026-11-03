@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from app.api.deps import get_db_connection, get_db_transaction, get_today
+from app.api.rate_limit import RateLimit
 from app.schemas.sessions import AnswerRequest, SessionCreateRequest, SessionResponse
 from app.services import session_service
 from app.services.session_service import InvalidAnswerError, SessionNotFoundError
@@ -15,10 +16,19 @@ router = APIRouter(prefix="/v1/sessions", tags=["sessions"])
 ReadConn = Annotated[AsyncConnection, Depends(get_db_connection)]
 WriteConn = Annotated[AsyncConnection, Depends(get_db_transaction, scope="function")]
 
+# 쓰기 경로만 제한한다. 생성은 전체 후보 조회 + INSERT 라 가장 무겁다.
+CREATE_LIMIT = RateLimit(per_ip=20, total=300, window_sec=600)
+ANSWER_LIMIT = RateLimit(per_ip=60, total=900, window_sec=600)
+
 _NOT_FOUND = "세션이 없거나 만료됨"
 
 
-@router.post("", response_model=SessionResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "",
+    response_model=SessionResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(CREATE_LIMIT)],
+)
 async def create_session(
     request: SessionCreateRequest,
     conn: WriteConn,
@@ -37,7 +47,11 @@ async def get_session(session_id: uuid.UUID, conn: ReadConn) -> SessionResponse:
         raise HTTPException(status.HTTP_404_NOT_FOUND, _NOT_FOUND) from exc
 
 
-@router.post("/{session_id}/answers", response_model=SessionResponse)
+@router.post(
+    "/{session_id}/answers",
+    response_model=SessionResponse,
+    dependencies=[Depends(ANSWER_LIMIT)],
+)
 async def answer_session(
     session_id: uuid.UUID, request: AnswerRequest, conn: WriteConn
 ) -> SessionResponse:

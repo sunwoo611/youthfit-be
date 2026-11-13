@@ -6,9 +6,10 @@ alwaysApply: true
 # YouthFit 백엔드
 
 - 응답은 한국어로 한다.
-- 서비스: 자연어 1문장 → LLM 역질문 3~5개(칩 UI) → 정책 지원금 + 우대 적금 통합 추천 (자격 근거 + 공식 URL).
+- 서비스: 자연어 1문장 → LLM 역질문 3~5개(칩 UI) → 청년 정책 지원금 추천 (자격 근거 + 공식 URL).
+- 적금(금감원)은 범위에서 제외했다. 적금 적재·추천을 다시 넣지 않는다. 근거: `docs/decisions/010-policy-only-scope.md`.
 - 스택: Python 3.12, FastAPI(async), PostgreSQL, SQLAlchemy 2 + asyncpg, uv. LLM은 OpenAI(gpt-4o-mini 등).
-- 데이터: 온통청년 / 금감원 API는 **일 배치로 DB에 미러링**. 요청 경로에서 외부 공공 API를 직접 호출하지 않는다.
+- 데이터: 온통청년 API는 **일 배치로 DB에 미러링**. 요청 경로에서 외부 공공 API를 직접 호출하지 않는다.
 - 후보 축소는 SQL/메타데이터, LLM은 역질문 생성과 선정 사유 서술에만 사용한다.
 - **환각 방지**: 추천 URL·자격 조건·마감일은 항상 DB 값만 사용하고, LLM 출력의 ID/URL은 서버에서 검증한다.
 - MVP 별도 Vector DB는 도입하지 않는다 (필요 시 pgvector). 근거: `docs/decisions/001-stack-and-mvp-scope.md`.

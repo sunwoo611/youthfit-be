@@ -35,4 +35,7 @@ jobs:
       - run: uv sync --locked
       - run: uv run ruff check .
       - run: uv run alembic upgrade head
+      # 롤백은 DB downgrade가 먼저라(ADR 010) 최신 리비전의 downgrade가 깨지지 않았는지 확인한다.
+      - run: uv run alembic downgrade -1
+      - run: uv run alembic upgrade head
       - run: uv run pytest

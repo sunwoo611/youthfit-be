@@ -17,5 +17,5 @@ async def create_candidates(
     conn: Annotated[AsyncConnection, Depends(get_db_connection)],
     today: Annotated[date, Depends(get_today)],
 ) -> CandidateResponse:
-    """정책(최대 50)·적금(최대 20) 후보를 고른다. 외부 API·LLM 은 호출하지 않는다."""
+    """정책 후보(최대 50)를 고른다. 외부 API·LLM 은 호출하지 않는다."""
     return await find_candidates(conn, request, today)

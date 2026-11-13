@@ -1,6 +1,6 @@
 # YouthFit Backend (youthfit-be)
 
-LLM 기반 역질문 대화로 청년 정책·금융상품을 통합 추천하는 서비스 **청핏(YouthFit)** 의 백엔드입니다.
+LLM 기반 역질문 대화로 청년 정책 지원금을 추천하는 서비스 **청핏(YouthFit)** 의 백엔드입니다.
 FastAPI + PostgreSQL 기반이며, 프로젝트 배경과 기술 결정 기록은 [`docs/`](docs/README.md)에 있습니다.
 
 ## 요구 사항
@@ -32,16 +32,16 @@ uv run uvicorn app.main:app --reload
 
 ## 공공 데이터 적재 (일 배치)
 
-온통청년 정책과 금감원 적금(은행·저축은행)을 PostgreSQL 에 미러링합니다. `.env` 에 `ONTONG_YOUTH_API_KEY`, `FSS_API_KEY` 가 필요합니다.
+온통청년 정책을 PostgreSQL 에 미러링합니다. `.env` 에 `ONTONG_YOUTH_API_KEY` 가 필요합니다.
 
 ```powershell
-uv run python -m app.ingest                  # 전체
-uv run python -m app.ingest --source ontong  # 온통청년만
-uv run python -m app.ingest --source fss     # 금감원만
+uv run python -m app.ingest
 ```
 
+`--source all|ontong` 은 예전 호출과의 호환을 위해 받기만 하고, 어느 값이든 온통청년만 적재합니다.
+
 - 실행 결과(건수, 소요 시간, 미등록 코드)는 표준 출력에, 실행 이력은 `ingest_runs` 테이블에 남습니다.
-- 원본에서 사라진 정책·상품은 두 조건을 모두 만족할 때만 삭제합니다. 하나라도 어긋나면 아무것도 지우지 않고 `partial` 로 기록합니다.
+- 원본에서 사라진 정책은 두 조건을 모두 만족할 때만 삭제합니다. 하나라도 어긋나면 아무것도 지우지 않고 `partial` 로 기록합니다.
   1. API 가 알려준 전체 건수 이상을 중복 없이 수집했다.
   2. 삭제 대상이 적재 전 기존 행의 5% 이하다 (API 가 일시적으로 적은 건수를 돌려줘도 미러가 비지 않게 하는 상한).
 - 실행 상태: `success` / `partial` / `failed` / `cancelled`(Ctrl+C) / `abandoned`(6시간 넘게 종료 기록 없이 남은 실행, 다음 실행 시 정리).
@@ -68,7 +68,7 @@ schtasks /Create /TN "youthfit-ingest" /SC DAILY /ST 04:00 /TR "powershell -NoPr
 
 ## 후보 추천 API (1차 룰 필터)
 
-`POST /v1/candidates` 는 적재된 DB만 조회해 정책 최대 50건, 적금 최대 20건을 돌려줍니다. 외부 API·LLM 은 호출하지 않습니다.
+`POST /v1/candidates` 는 적재된 DB만 조회해 정책 최대 50건을 돌려줍니다. 외부 API·LLM 은 호출하지 않습니다.
 
 ```powershell
 $body = '{"age": 25, "sido_code": "11", "employment_status": "unemployed", "interests": ["housing"]}'
@@ -77,7 +77,7 @@ Invoke-RestMethod -Method Post -Uri http://localhost:8000/v1/candidates -Content
 
 - 필드는 모두 선택입니다. `query`(자연어 한 문장)를 주면 비어 있는 필드만 규칙 사전으로 채웁니다.
 - 시도를 주지 않으면 전국 정책만 고릅니다. 마감 정책은 빼고, 신청 가능 > 신청 예정 > 신청기간 확인 필요 순입니다.
-- 카드의 `official_url` 은 DB 값으로만 만듭니다 (신청 URL → 참고 URL → 온통청년 상세 페이지, 적금은 금융회사 홈페이지).
+- 카드의 `official_url` 은 DB 값으로만 만듭니다 (신청 URL → 참고 URL → 온통청년 상세 페이지).
 
 ## 개발 서버 배포 (Render)
 
@@ -87,7 +87,7 @@ Invoke-RestMethod -Method Post -Uri http://localhost:8000/v1/candidates -Content
 
 1. 이 구성이 `main` 에 merge 되어 있어야 합니다 (`render.yaml`, `.github/workflows/`).
 2. Render 대시보드 → **New → Blueprint** → GitHub 레포 연결 → `render.yaml` 선택. `sync: false` 항목(`CORS_ORIGIN_REGEX`, `OPENAI_API_KEY`)은 이때 입력하거나 비워 둡니다.
-3. 생성된 `youthfit-db` 의 **External Database URL** 을 복사해 GitHub 레포 **Settings → Secrets and variables → Actions** 에 등록합니다: `DATABASE_URL`, `ONTONG_YOUTH_API_KEY`, `FSS_API_KEY`.
+3. 생성된 `youthfit-db` 의 **External Database URL** 을 복사해 GitHub 레포 **Settings → Secrets and variables → Actions** 에 등록합니다: `DATABASE_URL`, `ONTONG_YOUTH_API_KEY`.
 4. GitHub **Actions → Daily ingest → Run workflow** 로 최초 적재를 합니다. 이후 매일 04:00(KST)에 자동 실행됩니다.
 5. 프론트 도메인이 정해지면 `render.yaml` 의 `CORS_ORIGINS` 값에 쉼표로 추가해 merge 합니다 (예: `http://localhost:3000,https://youthfit.vercel.app`). 대시보드에서 바꾸면 다음 Blueprint 동기화 때 `render.yaml` 값으로 되돌아갑니다. Vercel 프리뷰 주소는 대시보드에서 `CORS_ORIGIN_REGEX` (예: `https://youthfit-fe-[a-z0-9-]+\.vercel\.app`) 로 허용합니다 (`sync: false` 라 덮어쓰지 않음).
 

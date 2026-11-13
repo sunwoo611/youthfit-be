@@ -7,7 +7,6 @@ import httpx
 import pytest
 
 from app.core.config import Settings
-from app.ingest.fss import FIN_GRP_BANK, FssClient
 from app.ingest.http import ApiHttpClient, IngestAPIError, redact
 from app.ingest.ontong import OntongClient
 
@@ -31,20 +30,6 @@ def _ontong_body(policies: list[dict], total: int, page: int, size: int) -> dict
             "pagging": {"totCount": total, "pageNum": page, "pageSize": size},
             "youthPolicyList": policies,
         },
-    }
-
-
-def _fss_body(page: int, max_page: int, base: list[dict], options: list[dict]) -> dict:
-    return {
-        "result": {
-            "total_count": len(base) * max_page,
-            "max_page_no": max_page,
-            "now_page_no": page,
-            "err_cd": "000",
-            "err_msg": "정상",
-            "baseList": base,
-            "optionList": options,
-        }
     }
 
 
@@ -215,70 +200,8 @@ async def test_request_interval_is_applied(monkeypatch):
     assert all(0 < s <= 0.5 for s in sleeps)
 
 
-async def test_fss_saving_products_merges_pages():
-    sample = json.loads(
-        (SAMPLES / "fss-savingProductsSearch-sample.json").read_text(encoding="utf-8")
-    )["result"]
-    requests: list[httpx.Request] = []
-
-    def handler(req: httpx.Request) -> httpx.Response:
-        requests.append(req)
-        page = int(req.url.params["pageNo"])
-        base = sample["baseList"][page - 1 : page]
-        options = [o for o in sample["optionList"] if o["fin_prdt_cd"] == base[0]["fin_prdt_cd"]]
-        return httpx.Response(200, json=_fss_body(page, 2, base, options))
-
-    async with _http(handler) as http:
-        listing = await FssClient(API_KEY, http).fetch_saving_products(FIN_GRP_BANK)
-
-    assert listing.fin_grp_code == FIN_GRP_BANK
-    assert [b["fin_prdt_cd"] for b in listing.base_list] == ["WR0001F", "WR0001L"]
-    assert len(listing.option_list) == len(sample["optionList"])
-    assert requests[0].url.path == "/finlifeapi/savingProductsSearch.json"
-    assert requests[0].url.params["auth"] == API_KEY
-    assert requests[0].url.params["topFinGrpNo"] == FIN_GRP_BANK
-    assert [r.url.params["pageNo"] for r in requests] == ["1", "2"]
-
-
-async def test_fss_companies_uses_company_endpoint():
-    company = {
-        "fin_co_no": "0010001",
-        "kor_co_nm": "우리은행",
-        "homp_url": "https://www.wooribank.com",
-        "cal_tel": "1588-5000",
-    }
-    paths: list[str] = []
-
-    def handler(req: httpx.Request) -> httpx.Response:
-        paths.append(req.url.path)
-        return httpx.Response(200, json=_fss_body(1, 1, [company], []))
-
-    async with _http(handler) as http:
-        listing = await FssClient(API_KEY, http).fetch_companies(FIN_GRP_BANK)
-
-    assert paths == ["/finlifeapi/companySearch.json"]
-    assert listing.base_list[0]["homp_url"] == "https://www.wooribank.com"
-
-
-async def test_fss_error_code_raises_without_retry():
-    calls = 0
-
-    def handler(req: httpx.Request) -> httpx.Response:
-        nonlocal calls
-        calls += 1
-        return httpx.Response(200, json={"result": {"err_cd": "010", "err_msg": "미등록 인증키"}})
-
-    async with _http(handler) as http:
-        with pytest.raises(IngestAPIError, match="err_cd=010"):
-            await FssClient(API_KEY, http).fetch_saving_products(FIN_GRP_BANK)
-
-    assert calls == 1
-
-
-async def test_from_settings_requires_api_keys():
-    settings = Settings(_env_file=None, ontong_youth_api_key=None, fss_api_key=None)
+async def test_from_settings_requires_api_key():
+    settings = Settings(_env_file=None, ontong_youth_api_key=None)
     async with _http(lambda req: httpx.Response(200)) as http:
         with pytest.raises(ValueError, match="ONTONG_YOUTH_API_KEY"):
             OntongClient.from_settings(settings, http)
-        with pytest.raises(ValueError, match="FSS_API_KEY"):
-            FssClient.from_settings(settings, http)

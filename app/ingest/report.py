@@ -18,7 +18,7 @@ from app.core.config import get_settings
 from app.core.database import dispose_engine, get_engine
 from app.ingest import codes
 from app.ingest.normalize import KST
-from app.models import FinancialCompany, Policy, SavingProduct
+from app.models import Policy
 from app.services.policy_status import Availability, policy_availability
 
 REGION_FREE_MIN_SIGUNGU = codes.REGION_FREE_MIN_SIGUNGU
@@ -88,13 +88,6 @@ class PolicyStats:
         for name in _FLAG_FIELDS:
             if flags[name]:
                 setattr(self, name, getattr(self, name) + 1)
-
-
-@dataclass(frozen=True)
-class SavingStats:
-    products: int
-    youth: int
-    homepage_mapped: int
 
 
 @dataclass(frozen=True)
@@ -203,17 +196,6 @@ def aggregate_policies(rows: Iterable[Mapping[str, object]], today: date) -> dic
     return groups
 
 
-def aggregate_savings(rows: Iterable[Mapping[str, object]]) -> SavingStats:
-    products = youth = homepage_mapped = 0
-    for row in rows:
-        products += 1
-        if row.get("is_youth"):
-            youth += 1
-        if not is_blank(row.get("homepage_url")):
-            homepage_mapped += 1
-    return SavingStats(products=products, youth=youth, homepage_mapped=homepage_mapped)
-
-
 def _meets(part: int, total: int) -> bool:
     return total > 0 and part / total >= HIGH_RATIO
 
@@ -263,9 +245,7 @@ def _metric_row(label: str, stats: dict[str, PolicyStats], attr: str) -> str:
     return f"| {label} | {cells} |"
 
 
-def render_markdown(
-    policies: dict[str, PolicyStats], savings: SavingStats, today: date
-) -> str:
+def render_markdown(policies: dict[str, PolicyStats], today: date) -> str:
     ordered = {key: policies[key] for key in GROUP_ORDER}
     headers = " | ".join(GROUP_LABELS[key] for key in GROUP_ORDER)
     counts = " | ".join(str(ordered[key].total) for key in GROUP_ORDER)
@@ -327,15 +307,6 @@ def render_markdown(
             f"| 지원 내용 짧거나 없음 ({SHORT_SUPPORT_CHARS}자 미만) | {brief_cells} |",
             f"| 마감 제외 후보 중 신청기간 확인 필요 | {live_unverified_cells} |",
             "",
-            "## 적금",
-            "",
-            "| 지표 | 값 |",
-            "|---|---:|",
-            f"| 상품 수 | {savings.products} |",
-            f"| 청년 상품 | {format_ratio(savings.youth, savings.products)} |",
-            "| 금융회사 홈페이지 URL 매핑 | "
-            f"{format_ratio(savings.homepage_mapped, savings.products)} |",
-            "",
             "## 크롤링 필요성",
             "",
             "판단은 서울·경기 열만 본다.",
@@ -375,28 +346,19 @@ def _policy_select():
     )
 
 
-def _saving_select():
-    return (
-        select(SavingProduct.is_youth, FinancialCompany.homepage_url)
-        .select_from(SavingProduct)
-        .outerjoin(FinancialCompany, FinancialCompany.fin_co_no == SavingProduct.fin_co_no)
-    )
-
-
 async def load_report(
     conn: AsyncConnection, today: date | None = None
-) -> tuple[dict[str, PolicyStats], SavingStats, date]:
-    """policies·saving_products 를 읽어 집계한다. 쓰기는 하지 않는다."""
+) -> tuple[dict[str, PolicyStats], date]:
+    """policies 를 읽어 집계한다. 쓰기는 하지 않는다."""
     as_of = today or datetime.now(KST).date()
     policy_rows = (await conn.execute(_policy_select())).mappings().all()
-    saving_rows = (await conn.execute(_saving_select())).mappings().all()
-    return aggregate_policies(policy_rows, as_of), aggregate_savings(saving_rows), as_of
+    return aggregate_policies(policy_rows, as_of), as_of
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="python -m app.ingest.report",
-        description="적재된 정책·적금의 필드 채움률을 조회한다. DB를 변경하지 않는다.",
+        description="적재된 정책의 필드 채움률을 조회한다. DB를 변경하지 않는다.",
     )
     parser.add_argument(
         "--today",
@@ -415,13 +377,13 @@ async def main(today: date | None) -> int:
         return 2
     try:
         async with engine.connect() as conn:
-            policies, savings, as_of = await load_report(conn, today)
+            policies, as_of = await load_report(conn, today)
     except (OSError, SQLAlchemyError) as exc:
         print(f"DB 조회 실패: {type(exc).__name__}", file=sys.stderr)
         return 1
     finally:
         await dispose_engine()
-    print(render_markdown(policies, savings, as_of))
+    print(render_markdown(policies, as_of))
     return 0
 
 

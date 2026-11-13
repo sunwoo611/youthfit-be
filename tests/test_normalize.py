@@ -1,6 +1,5 @@
 import json
 from datetime import date, datetime
-from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -12,16 +11,12 @@ from app.ingest.normalize import (
     clean_text,
     clean_url,
     find_unknown_codes,
-    is_youth_product,
-    normalize_company,
     normalize_policy,
-    normalize_saving_option,
-    normalize_saving_product,
     parse_apply_period,
     parse_biz_period,
     parse_zip_codes,
 )
-from app.models import FinancialCompany, Policy, SavingProduct, SavingProductOption
+from app.models import Policy
 
 SAMPLES = Path(__file__).resolve().parents[1] / "docs" / "data-samples"
 
@@ -33,11 +28,6 @@ def _load(name: str) -> dict:
 @pytest.fixture(scope="module")
 def ontong_policies() -> list[dict]:
     return _load("ontong-getPlcy-sample.json")["result"]["youthPolicyList"]
-
-
-@pytest.fixture(scope="module")
-def fss_result() -> dict:
-    return _load("fss-savingProductsSearch-sample.json")["result"]
 
 
 def _policy_by_no(policies: list[dict], suffix: str) -> dict:
@@ -269,74 +259,3 @@ def test_find_unknown_codes_counts_malformed_values_dropped_by_normalize(ontong_
         ("marriage_code", "0055001,0055002"),
         ("special_codes", "0014099"),
     ]
-
-
-def test_normalize_saving_product_sample(fss_result):
-    raw = fss_result["baseList"][0]
-    row = normalize_saving_product(raw, "020000")
-
-    assert (row["fin_co_no"], row["fin_prdt_cd"]) == ("0010001", "WR0001F")
-    assert row["fin_grp_code"] == "020000"
-    assert row["company_name"] == "우리은행"
-    assert row["name"] == "우리SUPER주거래적금"
-    assert row["max_limit"] is None
-    assert row["dcls_month"] == "202609"
-    assert row["is_youth"] is False
-    columns = {c.key for c in SavingProduct.__table__.columns} - {"ingested_at"}
-    assert set(row) == columns
-
-
-@pytest.mark.parametrize(
-    ("fields", "expected"),
-    [
-        ({"fin_prdt_nm": "KB청년도약적금"}, True),
-        ({"join_member": "만 19세 이상 ~ 만 34세 이하 실명의 개인"}, True),
-        ({"join_member": "만19~34세 개인"}, True),
-        ({"spcl_cnd": "사회초년생 우대 0.5%p"}, True),
-        ({"join_member": "실명의 개인", "etc_note": "가입기간 12~36개월"}, False),
-        ({"join_member": "만 65세 이상 개인"}, False),
-    ],
-)
-def test_is_youth_product(fields, expected):
-    assert is_youth_product(fields) is expected
-
-
-def test_normalize_saving_option_sample(fss_result):
-    row = normalize_saving_option(fss_result["optionList"][0])
-    assert row == {
-        "fin_co_no": "0010001",
-        "fin_prdt_cd": "WR0001F",
-        "rate_type": "S",
-        "rate_type_name": "단리",
-        "reserve_type": "F",
-        "reserve_type_name": "자유적립식",
-        "term_months": 12,
-        "base_rate": Decimal("2.45"),
-        "max_rate": Decimal("3.85"),
-    }
-    columns = {c.key for c in SavingProductOption.__table__.columns} - {"id"}
-    assert set(row) == columns
-
-
-def test_normalize_saving_option_null_rate(fss_result):
-    row = normalize_saving_option({**fss_result["optionList"][0], "intr_rate2": None})
-    assert row["max_rate"] is None
-
-
-def test_normalize_company():
-    raw = {
-        "fin_co_no": "0010001",
-        "kor_co_nm": "우리은행",
-        "homp_url": "https://www.wooribank.com",
-        "cal_tel": "1588-5000",
-    }
-    row = normalize_company(raw, "020000")
-    assert row["homepage_url"] == "https://www.wooribank.com"
-    assert row["call_center"] == "1588-5000"
-    columns = {c.key for c in FinancialCompany.__table__.columns} - {"ingested_at"}
-    assert set(row) == columns
-
-
-def test_normalize_saving_requires_keys():
-    with pytest.raises(NormalizeError, match="fin_prdt_cd"):
-        normalize_saving_product({"fin_co_no": "1", "fin_prdt_nm": "x"}, "020000")

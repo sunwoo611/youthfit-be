@@ -3,7 +3,6 @@
 import itertools
 from collections.abc import AsyncIterator
 from datetime import date
-from decimal import Decimal
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -14,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 from app.api.deps import get_db_connection, get_today
 from app.ingest import codes
 from app.main import app
-from app.models import FinancialCompany, Policy, SavingProduct, SavingProductOption
+from app.models import Policy
 from app.schemas.candidates import (
     AppliedConditions,
     CandidateRequest,
@@ -28,7 +27,6 @@ from app.schemas.candidates import (
 from app.services.candidate_service import (
     ONTONG_DETAIL_URL,
     POLICY_LIMIT,
-    SAVING_LIMIT,
     availability_expr,
     find_candidates,
     policy_official_link,
@@ -510,79 +508,6 @@ async def test_policy_card_uses_db_links_and_eligibility(db_conn: AsyncConnectio
     assert cards["NONE"].eligibility.min_age == 19
 
 
-async def _insert_saving(
-    conn: AsyncConnection, code: str, *, youth: bool, max_rate: str | None, fin_co_no: str = "CO"
-) -> None:
-    await conn.execute(
-        insert(SavingProduct.__table__),
-        {
-            "fin_co_no": fin_co_no,
-            "fin_prdt_cd": code,
-            "fin_grp_code": "020000",
-            "company_name": "테스트은행",
-            "name": f"적금 {code}",
-            "is_youth": youth,
-            "raw": {},
-        },
-    )
-    if max_rate is None:
-        return
-    await conn.execute(
-        insert(SavingProductOption.__table__),
-        [
-            {
-                "fin_co_no": fin_co_no,
-                "fin_prdt_cd": code,
-                "rate_type": "S",
-                "reserve_type": "S",
-                "term_months": term,
-                "base_rate": Decimal("2.00"),
-                "max_rate": Decimal(max_rate) - Decimal(offset),
-            }
-            for term, offset in ((12, "0"), (24, "0.5"))
-        ],
-    )
-
-
-async def test_savings_youth_first_then_max_rate(db_conn: AsyncConnection):
-    await db_conn.execute(
-        insert(FinancialCompany.__table__),
-        {
-            "fin_co_no": "CO",
-            "fin_grp_code": "020000",
-            "name": "테스트은행",
-            "homepage_url": "https://bank.example",
-            "raw": {},
-        },
-    )
-    await _insert_saving(db_conn, "GENERAL-HIGH", youth=False, max_rate="9.00")
-    await _insert_saving(db_conn, "YOUTH-LOW", youth=True, max_rate="4.00")
-    await _insert_saving(db_conn, "YOUTH-HIGH", youth=True, max_rate="6.00")
-    await _insert_saving(db_conn, "NO-RATE", youth=False, max_rate=None)
-    await _insert_saving(db_conn, "ORPHAN", youth=False, max_rate="3.00", fin_co_no="NOCO")
-    for i in range(SAVING_LIMIT):
-        await _insert_saving(db_conn, f"FILL-{i:02d}", youth=False, max_rate="1.00")
-
-    result = await find_candidates(db_conn, CandidateRequest(), TODAY)
-    items = result.savings.items
-    assert result.savings.total == SAVING_LIMIT + 5
-    assert len(items) == SAVING_LIMIT
-    assert [item.fin_prdt_cd for item in items[:4]] == [
-        "YOUTH-HIGH",
-        "YOUTH-LOW",
-        "GENERAL-HIGH",
-        "ORPHAN",
-    ]
-    assert items[0].max_rate == 6.0
-    assert items[0].base_rate == 2.0
-    assert (items[0].official_url, items[0].url_source) == (
-        "https://bank.example",
-        LinkSource.COMPANY_HOMEPAGE,
-    )
-    assert (items[3].official_url, items[3].url_source) == (None, None)
-    assert "NO-RATE" not in {item.fin_prdt_cd for item in items}
-
-
 @pytest.fixture
 async def client(db_conn: AsyncConnection) -> AsyncIterator[AsyncClient]:
     async def _conn() -> AsyncIterator[AsyncConnection]:
@@ -616,7 +541,7 @@ async def test_candidates_endpoint(client: AsyncClient, db_conn: AsyncConnection
     card = body["policies"]["items"][0]
     assert card["official_url"] == "https://apply.example"
     assert card["availability"] == "open"
-    assert body["savings"] == {"total": 0, "items": []}
+    assert "savings" not in body
 
 
 async def test_candidates_endpoint_rejects_unknown_sido(client: AsyncClient):

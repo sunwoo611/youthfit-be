@@ -12,7 +12,7 @@ from sqlalchemy import insert
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from app.ingest import codes
-from app.ingest.normalize import normalize_policy, normalize_saving_product
+from app.ingest.normalize import normalize_policy
 from app.ingest.report import (
     GROUP_ALL,
     GROUP_REGION_FREE,
@@ -20,14 +20,13 @@ from app.ingest.report import (
     HIGH_RATIO,
     REGION_FREE_MIN_SIGUNGU,
     aggregate_policies,
-    aggregate_savings,
     is_weak_text,
     judge_crawl,
     load_report,
     policy_groups,
     render_markdown,
 )
-from app.models import FinancialCompany, Policy, SavingProduct
+from app.models import Policy
 
 SAMPLES = Path(__file__).resolve().parents[1] / "docs" / "data-samples"
 
@@ -159,9 +158,7 @@ def test_availability_counts_and_unverified_share_of_live_candidates():
     stats = aggregate_policies(rows, TODAY)[GROUP_ALL]
     assert (stats.open, stats.upcoming, stats.closed, stats.unverified) == (2, 1, 2, 1)
 
-    text = render_markdown(
-        aggregate_policies(rows, TODAY), aggregate_savings([]), TODAY
-    )
+    text = render_markdown(aggregate_policies(rows, TODAY), TODAY)
     assert "| 마감 제외 후보 중 신청기간 확인 필요 | 25.0% (1/4) |" in text
 
 
@@ -228,15 +225,7 @@ def test_render_markdown_includes_rates_criteria_and_decision():
         for _ in range(5)
     ]
     rows += [_policy() for _ in range(5)]
-    policies = aggregate_policies(rows, TODAY)
-    savings = aggregate_savings(
-        [
-            {"is_youth": True, "homepage_url": "https://bank.example"},
-            {"is_youth": False, "homepage_url": None},
-            {"is_youth": True, "homepage_url": "  "},
-        ]
-    )
-    text = render_markdown(policies, savings, TODAY)
+    text = render_markdown(aggregate_policies(rows, TODAY), TODAY)
 
     assert "50.0% (5/10)" in text
     assert "서울·경기" in text
@@ -244,21 +233,7 @@ def test_render_markdown_includes_rates_criteria_and_decision():
     assert "50%" in text
     assert "2개 이상" in text
     assert "선별 보완" in text
-    assert "66.7% (2/3)" in text
-    assert "33.3% (1/3)" in text
-
-
-def test_aggregate_savings_counts_youth_and_nonblank_homepage():
-    stats = aggregate_savings(
-        [
-            {"is_youth": True, "homepage_url": "https://bank.example"},
-            {"is_youth": False, "homepage_url": None},
-            {"is_youth": True, "homepage_url": "  "},
-        ]
-    )
-    assert stats.products == 3
-    assert stats.youth == 2
-    assert stats.homepage_mapped == 1
+    assert "적금" not in text
 
 
 def _sample_policy(plcy_no: str) -> dict:
@@ -267,7 +242,7 @@ def _sample_policy(plcy_no: str) -> dict:
     return normalize_policy(raw)
 
 
-async def test_load_report_reads_policy_and_saving_rows(db_conn: AsyncConnection):
+async def test_load_report_reads_policy_rows(db_conn: AsyncConnection):
     conn = db_conn
     policy = _sample_policy("QR-1")
     policy["sido_codes"] = ["11"]
@@ -278,33 +253,8 @@ async def test_load_report_reads_policy_and_saving_rows(db_conn: AsyncConnection
     policy["screening_method"] = "별도 문의"
     policy["documents"] = None
     await conn.execute(insert(Policy.__table__), policy)
-    await conn.execute(
-        insert(FinancialCompany.__table__),
-        {
-            "fin_co_no": "QRCO",
-            "fin_grp_code": "020000",
-            "name": "테스트은행",
-            "homepage_url": "https://bank.example",
-            "call_center": None,
-            "raw": {"fin_co_no": "QRCO"},
-        },
-    )
-    youth = normalize_saving_product(
-        {
-            "fin_co_no": "QRCO",
-            "fin_prdt_cd": "QR-Y",
-            "fin_prdt_nm": "청년 적금",
-            "join_member": "청년",
-        },
-        "020000",
-    )
-    orphan = normalize_saving_product(
-        {"fin_co_no": "MISSING", "fin_prdt_cd": "QR-N", "fin_prdt_nm": "일반 적금"},
-        "020000",
-    )
-    await conn.execute(insert(SavingProduct.__table__), [youth, orphan])
 
-    policies, savings, _today = await load_report(conn, TODAY)
+    policies, _today = await load_report(conn, TODAY)
 
     seoul = policies[GROUP_SEOUL_GYEONGGI]
     assert seoul.total == 1
@@ -313,6 +263,3 @@ async def test_load_report_reads_policy_and_saving_rows(db_conn: AsyncConnection
     assert seoul.screening_method_weak == 1
     assert seoul.documents_weak == 1
     assert policies[GROUP_ALL].total == 1
-    assert savings.products == 2
-    assert savings.youth == 1
-    assert savings.homepage_mapped == 1

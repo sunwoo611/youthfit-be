@@ -14,15 +14,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.ingest import loader
-from app.ingest.fss import DEFAULT_FIN_GROUPS, FssClient, FssListing
-from app.ingest.normalize import (
-    NormalizeError,
-    find_unknown_codes,
-    normalize_company,
-    normalize_policy,
-    normalize_saving_option,
-    normalize_saving_product,
-)
+from app.ingest.normalize import NormalizeError, find_unknown_codes, normalize_policy
 from app.ingest.ontong import OntongClient
 
 logger = logging.getLogger(__name__)
@@ -76,46 +68,6 @@ def prepare_policies(raws: list[dict[str, Any]]) -> tuple[Prepared, Counter[tupl
     return prepared, unknown
 
 
-def prepare_companies(listing: FssListing) -> Prepared:
-    return _prepare(
-        listing.base_list,
-        lambda raw: normalize_company(raw, listing.fin_grp_code),
-        lambda r: (r["fin_co_no"],),
-    )
-
-
-@dataclass
-class PreparedSaving:
-    products: Prepared
-    options: Prepared
-    orphan_options: int = 0
-
-
-def prepare_saving(listing: FssListing) -> PreparedSaving:
-    """상품에 없는 옵션은 FK 위반이므로 버리고 orphan 으로 센다."""
-    products = _prepare(
-        listing.base_list,
-        lambda raw: normalize_saving_product(raw, listing.fin_grp_code),
-        lambda r: (r["fin_co_no"], r["fin_prdt_cd"]),
-    )
-    options = _prepare(
-        listing.option_list,
-        normalize_saving_option,
-        lambda r: (
-            r["fin_co_no"],
-            r["fin_prdt_cd"],
-            r["rate_type"],
-            r["reserve_type"],
-            r["term_months"],
-        ),
-    )
-    product_keys = {(p["fin_co_no"], p["fin_prdt_cd"]) for p in products.rows}
-    kept = [o for o in options.rows if (o["fin_co_no"], o["fin_prdt_cd"]) in product_keys]
-    orphan = len(options.rows) - len(kept)
-    options.rows = kept
-    return PreparedSaving(products=products, options=options, orphan_options=orphan)
-
-
 @dataclass
 class SourceReport:
     source: str
@@ -153,7 +105,7 @@ async def _run(
 ) -> SourceReport:
     """ingest_runs 에 시작·종료를 기록한다.
 
-    일반 예외는 failed 로 기록하고 삼켜서 다른 소스가 계속 돌게 한다.
+    일반 예외는 failed 로 기록하고 삼켜서, 호출자가 실행 결과를 출력한 뒤 종료 코드로 알리게 한다.
     Ctrl+C·작업 취소는 cancelled 로 기록한 뒤 다시 올려 프로그램을 멈춘다.
     """
     run_id = await loader.start_run(engine, report.source)
@@ -206,53 +158,6 @@ async def run_ontong(engine: AsyncEngine, client: OntongClient) -> SourceReport:
             )
         label = f"정책(전체 {result.total_count}건 중 {unique}건 수집)"
         report.status = "success" if report.apply_prune(label, complete, pruned) else "partial"
-
-    return await _run(engine, report, body)
-
-
-async def run_fss(
-    engine: AsyncEngine,
-    client: FssClient,
-    fin_groups: Iterable[str] = DEFAULT_FIN_GROUPS,
-) -> SourceReport:
-    report = SourceReport(source="fss")
-
-    async def body() -> None:
-        fetched: list[tuple[str, Prepared, PreparedSaving, bool]] = []
-        for grp in fin_groups:
-            companies = await client.fetch_companies(grp)
-            products = await client.fetch_saving_products(grp)
-            report.fetched += len(companies.base_list) + len(products.base_list)
-            unique = len({(p.get("fin_co_no"), p.get("fin_prdt_cd")) for p in products.base_list})
-            complete = is_complete_fetch(products.total_count, unique)
-            fetched.append((grp, prepare_companies(companies), prepare_saving(products), complete))
-
-        details: Counter[str] = Counter()
-        all_pruned = True
-        async with engine.begin() as conn:
-            for grp, companies, saving, complete in fetched:
-                n_companies = await loader.load_companies(conn, companies.rows)
-                n_products, n_options, pruned = await loader.load_saving_products(
-                    conn, grp, saving.products.rows, saving.options.rows, prune=complete
-                )
-                report.upserted += n_companies + n_products
-                all_pruned &= report.apply_prune(f"권역 {grp} 상품", complete, pruned)
-                for prepared in (companies, saving.products, saving.options):
-                    report.skipped += prepared.skipped
-                    report.duplicates += prepared.duplicates
-                    report.notes.extend(prepared.error_samples)
-                details[f"{grp}_companies"] += n_companies
-                details[f"{grp}_products"] += n_products
-                details[f"{grp}_options"] += n_options
-                details[f"{grp}_youth_products"] += sum(
-                    1 for p in saving.products.rows if p["is_youth"]
-                )
-                details[f"{grp}_companies_with_homepage"] += sum(
-                    1 for c in companies.rows if c["homepage_url"]
-                )
-                details[f"{grp}_orphan_options"] += saving.orphan_options
-        report.details.update(details)
-        report.status = "success" if all_pruned else "partial"
 
     return await _run(engine, report, body)
 

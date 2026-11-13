@@ -9,23 +9,17 @@ from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import pytest
-from sqlalchemy import delete, func, insert, select, text
+from sqlalchemy import delete, insert, select, text
 from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine
 
 from app.core.config import get_settings
 from app.ingest import loader
-from app.ingest.normalize import (
-    normalize_policy,
-    normalize_saving_option,
-    normalize_saving_product,
-)
-from app.models import FinancialCompany, IngestRun, Policy, SavingProduct, SavingProductOption
+from app.ingest.normalize import normalize_policy
+from app.models import IngestRun, Policy
 
 SAMPLES = Path(__file__).resolve().parents[1] / "docs" / "data-samples"
 
 policies = Policy.__table__
-products = SavingProduct.__table__
-options = SavingProductOption.__table__
 runs = IngestRun.__table__
 YESTERDAY = datetime.now(UTC) - timedelta(days=1)
 
@@ -45,7 +39,7 @@ async def conn() -> AsyncIterator[AsyncConnection]:
     try:
         if await connection.scalar(text("SELECT to_regclass('public.policies')")) is None:
             pytest.skip("스키마 미적용 (uv run alembic upgrade head)")
-        for table in (options, products, FinancialCompany.__table__, policies, runs):
+        for table in (policies, runs):
             await connection.execute(delete(table))
         yield connection
     finally:
@@ -60,19 +54,6 @@ def _policy(plcy_no: str, **overrides: str) -> dict:
     return normalize_policy(raw)
 
 
-def _saving(fin_prdt_cd: str, grp: str = "020000") -> tuple[dict, list[dict]]:
-    body = json.loads(
-        (SAMPLES / "fss-savingProductsSearch-sample.json").read_text(encoding="utf-8")
-    )["result"]
-    base = {**body["baseList"][0], "fin_co_no": "TEST001", "fin_prdt_cd": fin_prdt_cd}
-    opts = [
-        {**o, "fin_co_no": "TEST001", "fin_prdt_cd": fin_prdt_cd}
-        for o in body["optionList"]
-        if o["fin_prdt_cd"] == "WR0001F"
-    ]
-    return normalize_saving_product(base, grp), [normalize_saving_option(o) for o in opts]
-
-
 async def _seed_old_policies(conn: AsyncConnection, n: int) -> list[str]:
     ids = [f"TEST-{i:02d}" for i in range(n)]
     await conn.execute(insert(policies), [{**_policy(i), "ingested_at": YESTERDAY} for i in ids])
@@ -81,11 +62,6 @@ async def _seed_old_policies(conn: AsyncConnection, n: int) -> list[str]:
 
 async def _policy_ids(conn: AsyncConnection) -> list[str]:
     return sorted((await conn.execute(select(policies.c.plcy_no))).scalars().all())
-
-
-async def _option_counts(conn: AsyncConnection) -> dict[str, int]:
-    stmt = select(options.c.fin_prdt_cd, func.count()).group_by(options.c.fin_prdt_cd)
-    return dict((await conn.execute(stmt)).all())
 
 
 async def test_upsert_policies_inserts_then_updates(conn: AsyncConnection):
@@ -147,43 +123,6 @@ async def test_prune_false_never_deletes(conn: AsyncConnection):
     assert await _policy_ids(conn) == ids
 
 
-async def test_partial_saving_load_keeps_options_of_unfetched_products(conn: AsyncConnection):
-    a, a_opts = _saving("TEST-A")
-    b, b_opts = _saving("TEST-B")
-    await loader.load_saving_products(conn, "020000", [a, b], a_opts + b_opts, prune=False)
-
-    upserted, n_options, pruned = await loader.load_saving_products(
-        conn, "020000", [a], a_opts[:2], prune=False
-    )
-
-    assert (upserted, n_options, pruned) == (1, 2, None)
-    assert await _option_counts(conn) == {"TEST-A": 2, "TEST-B": len(b_opts)}
-
-
-async def test_saving_prune_is_scoped_to_group_and_cascades_options(conn: AsyncConnection):
-    group = [_saving(f"TEST-{i:02d}") for i in range(20)]
-    other, other_opts = _saving("TEST-OTHER", grp="030300")
-    await loader.load_saving_products(conn, "030300", [other], other_opts, prune=False)
-    await loader.load_saving_products(
-        conn, "020000", [p for p, _ in group], [o for _, os in group for o in os], prune=False
-    )
-    await conn.execute(products.update().values(ingested_at=YESTERDAY))
-
-    kept = group[:19]
-    _, _, pruned = await loader.load_saving_products(
-        conn, "020000", [p for p, _ in kept], [o for _, os in kept for o in os], prune=True
-    )
-
-    codes = dict(
-        (await conn.execute(select(products.c.fin_prdt_cd, products.c.fin_grp_code))).all()
-    )
-    counts = await _option_counts(conn)
-    assert pruned == loader.PruneResult(existing=20, stale=1, deleted=1)
-    assert "TEST-19" not in codes and "TEST-19" not in counts
-    assert codes["TEST-OTHER"] == "030300"
-    assert counts["TEST-OTHER"] == len(other_opts)
-
-
 async def test_abandon_stale_runs_only_touches_old_running_rows_of_same_source(
     conn: AsyncConnection,
 ):
@@ -195,7 +134,7 @@ async def test_abandon_stale_runs_only_touches_old_running_rows_of_same_source(
             {"source": "ontong", "status": "running", "started_at": old},
             {"source": "ontong", "status": "running", "started_at": now},
             {"source": "ontong", "status": "success", "started_at": old},
-            {"source": "fss", "status": "running", "started_at": old},
+            {"source": "other", "status": "running", "started_at": old},
         ],
     )
 
@@ -206,5 +145,5 @@ async def test_abandon_stale_runs_only_touches_old_running_rows_of_same_source(
         ("ontong", "abandoned"),
         ("ontong", "running"),
         ("ontong", "success"),
-        ("fss", "running"),
+        ("other", "running"),
     ]

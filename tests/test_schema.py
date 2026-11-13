@@ -14,9 +14,6 @@ ALEMBIC_INI = Path(__file__).resolve().parents[1] / "alembic.ini"
 
 EXPECTED_TABLES = {
     "policies",
-    "financial_companies",
-    "saving_products",
-    "saving_product_options",
     "ingest_runs",
     "sessions",
 }

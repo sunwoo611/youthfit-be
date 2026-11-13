@@ -59,7 +59,6 @@ class LinkSource(StrEnum):
     APPLY = "apply"
     REFERENCE = "reference"
     ONTONG_DETAIL = "ontong_detail"
-    COMPANY_HOMEPAGE = "company_homepage"
 
 
 class CandidateRequest(BaseModel):
@@ -136,27 +135,7 @@ class PolicyCandidates(BaseModel):
     items: list[PolicyCandidate]
 
 
-class SavingCandidate(BaseModel):
-    fin_co_no: str
-    fin_prdt_cd: str
-    name: str
-    company_name: str | None
-    is_youth: bool
-    max_rate: float | None = Field(description="옵션 중 최고 우대금리(%)")
-    base_rate: float | None = Field(description="옵션 중 최고 기본금리(%)")
-    join_member: str | None
-    special_condition: str | None
-    official_url: str | None
-    url_source: LinkSource | None
-
-
-class SavingCandidates(BaseModel):
-    total: int
-    items: list[SavingCandidate]
-
-
 class CandidateResponse(BaseModel):
     as_of: date
     conditions: AppliedConditions
     policies: PolicyCandidates
-    savings: SavingCandidates

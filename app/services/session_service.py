@@ -68,7 +68,7 @@ async def create_session(
     # 일부 시군구 정책은 정렬상 상위 50 밖에 몰리므로 질문은 전체 후보로 고른다.
     rows = await fetch_policy_rows(conn, conditions, today, limit=None)
     questions = select_questions(rows, conditions)
-    candidates = await build_response(conn, conditions, today, rows)
+    candidates = build_response(conditions, today, rows)
     created = (
         await conn.execute(
             insert(SESSIONS)

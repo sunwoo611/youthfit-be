@@ -1,4 +1,4 @@
-"""1차 룰 필터. 사용자 조건으로 정책·적금 후보를 SQL 로 좁힌다 (LLM 미사용).
+"""1차 룰 필터. 사용자 조건으로 정책 후보를 SQL 로 좁힌다 (LLM 미사용).
 
 신청 가능 여부는 `policy_status.policy_availability` 와 같은 규칙을 SQL 로 건다(ADR 004).
 공식 링크는 DB 값에서 정해진 순서로 고른다(ADR 005).
@@ -6,7 +6,6 @@
 
 from collections.abc import Mapping, Sequence
 from datetime import date
-from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import (
@@ -24,7 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 from sqlalchemy.orm import aliased
 
 from app.ingest import codes
-from app.models import FinancialCompany, Policy, SavingProduct, SavingProductOption
+from app.models import Policy
 from app.schemas.candidates import (
     AppliedConditions,
     CandidateRequest,
@@ -37,15 +36,12 @@ from app.schemas.candidates import (
     PolicyCandidate,
     PolicyCandidates,
     PolicyEligibility,
-    SavingCandidate,
-    SavingCandidates,
     School,
 )
 from app.services.policy_status import Availability
 from app.services.query_hints import extract_hints
 
 POLICY_LIMIT = 50
-SAVING_LIMIT = 20
 ONTONG_DETAIL_URL = "https://www.youthcenter.go.kr/youthPolicy/ythPlcyTotalSearch/ythPlcyDetail/{}"
 
 EMPLOYMENT_JOB_CODE: dict[EmploymentStatus, str] = {
@@ -370,55 +366,6 @@ def policy_query(
     )
 
 
-def saving_query(limit: int = SAVING_LIMIT) -> Select:
-    rates = (
-        select(
-            SavingProductOption.fin_co_no,
-            SavingProductOption.fin_prdt_cd,
-            func.max(SavingProductOption.max_rate).label("max_rate"),
-            func.max(SavingProductOption.base_rate).label("base_rate"),
-        )
-        .group_by(SavingProductOption.fin_co_no, SavingProductOption.fin_prdt_cd)
-        .subquery("rates")
-    )
-    return (
-        select(
-            SavingProduct.fin_co_no,
-            SavingProduct.fin_prdt_cd,
-            SavingProduct.name,
-            SavingProduct.company_name,
-            SavingProduct.is_youth,
-            SavingProduct.join_member,
-            SavingProduct.special_condition,
-            rates.c.max_rate,
-            rates.c.base_rate,
-            FinancialCompany.homepage_url,
-            func.count().over().label("total"),
-        )
-        .select_from(SavingProduct)
-        .outerjoin(FinancialCompany, FinancialCompany.fin_co_no == SavingProduct.fin_co_no)
-        .outerjoin(
-            rates,
-            and_(
-                rates.c.fin_co_no == SavingProduct.fin_co_no,
-                rates.c.fin_prdt_cd == SavingProduct.fin_prdt_cd,
-            ),
-        )
-        .order_by(
-            SavingProduct.is_youth.desc(),
-            rates.c.max_rate.desc().nulls_last(),
-            rates.c.base_rate.desc().nulls_last(),
-            SavingProduct.fin_co_no,
-            SavingProduct.fin_prdt_cd,
-        )
-        .limit(limit)
-    )
-
-
-def _rate(value: Decimal | None) -> float | None:
-    return float(value) if value is not None else None
-
-
 def _policy_candidate(row: Mapping[str, Any]) -> PolicyCandidate:
     url, source = policy_official_link(row["plcy_no"], row["apply_url"], row["ref_urls"])
     job_codes = row["job_codes"] or []
@@ -448,23 +395,6 @@ def _policy_candidate(row: Mapping[str, Any]) -> PolicyCandidate:
     )
 
 
-def _saving_candidate(row: Mapping[str, Any]) -> SavingCandidate:
-    homepage = row["homepage_url"]
-    return SavingCandidate(
-        fin_co_no=row["fin_co_no"],
-        fin_prdt_cd=row["fin_prdt_cd"],
-        name=row["name"],
-        company_name=row["company_name"],
-        is_youth=row["is_youth"],
-        max_rate=_rate(row["max_rate"]),
-        base_rate=_rate(row["base_rate"]),
-        join_member=row["join_member"],
-        special_condition=row["special_condition"],
-        official_url=homepage,
-        url_source=LinkSource.COMPANY_HOMEPAGE if homepage else None,
-    )
-
-
 async def find_candidates(
     conn: AsyncConnection, request: CandidateRequest, today: date
 ) -> CandidateResponse:
@@ -475,7 +405,7 @@ async def search_candidates(
     conn: AsyncConnection, conditions: AppliedConditions, today: date
 ) -> CandidateResponse:
     rows = await fetch_policy_rows(conn, conditions, today)
-    return await build_response(conn, conditions, today, rows)
+    return build_response(conditions, today, rows)
 
 
 async def fetch_policy_rows(
@@ -487,23 +417,17 @@ async def fetch_policy_rows(
     return (await conn.execute(policy_query(conditions, today, limit))).mappings().all()
 
 
-async def build_response(
-    conn: AsyncConnection,
+def build_response(
     conditions: AppliedConditions,
     today: date,
     policy_rows: Sequence[Mapping[str, Any]],
 ) -> CandidateResponse:
     """정책 카드는 정렬된 행의 앞 POLICY_LIMIT 건만 만든다."""
-    saving_rows = (await conn.execute(saving_query())).mappings().all()
     return CandidateResponse(
         as_of=today,
         conditions=conditions,
         policies=PolicyCandidates(
             total=policy_rows[0]["total"] if policy_rows else 0,
             items=[_policy_candidate(row) for row in policy_rows[:POLICY_LIMIT]],
-        ),
-        savings=SavingCandidates(
-            total=saving_rows[0]["total"] if saving_rows else 0,
-            items=[_saving_candidate(row) for row in saving_rows],
         ),
     )

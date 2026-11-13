@@ -35,9 +35,10 @@ uv run uvicorn app.main:app --reload
 온통청년 정책을 PostgreSQL 에 미러링합니다. `.env` 에 `ONTONG_YOUTH_API_KEY` 가 필요합니다.
 
 ```powershell
-uv run python -m app.ingest                  # 전체 (현재는 온통청년만)
-uv run python -m app.ingest --source ontong  # 온통청년만
+uv run python -m app.ingest
 ```
+
+`--source all|ontong` 은 예전 호출과의 호환을 위해 받기만 하고, 어느 값이든 온통청년만 적재합니다.
 
 - 실행 결과(건수, 소요 시간, 미등록 코드)는 표준 출력에, 실행 이력은 `ingest_runs` 테이블에 남습니다.
 - 원본에서 사라진 정책은 두 조건을 모두 만족할 때만 삭제합니다. 하나라도 어긋나면 아무것도 지우지 않고 `partial` 로 기록합니다.

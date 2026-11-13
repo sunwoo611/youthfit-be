@@ -80,7 +80,7 @@ sequenceDiagram
 | `app/ingest/sigungu.py` | 법정 시군구 이름표(시군구 질문 선택지)와 일반구 묶음. 시도 12·28·36은 제외 |
 | `app/ingest/pipeline.py` | 수집 → 정규화(중복·실패 집계) → 소스별 단일 트랜잭션 적재, `ingest_runs` 기록 |
 | `app/ingest/loader.py` | `ON CONFLICT DO UPDATE` upsert(500행 배치), 미수집 행 삭제는 기존 행 5% 상한(근거: `decisions/003-ingest-prune-safety.md`) |
-| `app/ingest/__main__.py` | 적재 CLI `uv run python -m app.ingest --source all\|ontong` (`all`은 호환용, 온통청년만 적재) |
+| `app/ingest/__main__.py` | 적재 CLI `uv run python -m app.ingest` (온통청년만 적재, `--source all\|ontong`은 호환용으로 받기만 함) |
 | `app/jobs/cleanup_sessions.py` | 보관 기간(`SESSION_RETENTION_DAYS`, 기본 30일)이 지난 세션 삭제 CLI `uv run python -m app.jobs.cleanup_sessions` |
 | `app/ingest/report.py` | 필드 채움률 리포트 CLI `uv run python -m app.ingest.report` (읽기 전용, 크롤링 필요성 판단) |
 | `app/ingest/normalize.py` | 원문 → 모델 컬럼 dict 순수 함수 (공백 날짜, 신청기간·사업기간 파싱, 시군구→시도, URL 검증, 미등록 코드 집계) |

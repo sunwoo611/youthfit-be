@@ -73,6 +73,7 @@ sequenceDiagram
 | `app/services/query_hints.py` | 자연어 질의에서 지역·취업상태·나이·관심분야 규칙 사전 추출 (LLM 미사용) |
 | `app/core/config.py` | `pydantic-settings` 기반 설정 (CORS 허용 출처, `postgres://`·`sslmode` URL을 asyncpg 형식으로 변환) |
 | `app/core/database.py` | SQLAlchemy async 엔진 (DATABASE_URL 있을 때만 생성) |
+| `app/core/logging_config.py` | `app` 로거를 INFO로 열고 핸들러가 없을 때만 stderr 핸들러 추가. uvicorn 기본 설정이 `uvicorn` 로거만 잡아 LLM 토큰 사용량 로그가 버려지던 문제 대응 |
 | `app/models/` | ORM 모델: `Policy`, `IngestRun`, `QuestionSession` |
 | `app/ingest/http.py` | 수집 공통 HTTP: 요청 간 0.5초 지연, 3회 재시도(연결 오류·429/5xx·비 JSON), API 키 마스킹 |
 | `app/ingest/ontong.py` | 온통청년 `getPlcy` 클라이언트 (pageSize 100, `totCount` 기반 페이지네이션, `plcyNo` 중복 제거) |

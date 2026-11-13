@@ -92,7 +92,7 @@ async def create_session(
     )
 
 
-async def _load(conn: AsyncConnection, session_id: uuid.UUID) -> Mapping[str, Any]:
+async def load_session(conn: AsyncConnection, session_id: uuid.UUID) -> Mapping[str, Any]:
     row = (
         (
             await conn.execute(
@@ -113,12 +113,21 @@ def _questions(session: Mapping[str, Any]) -> list[Question]:
     return [Question.model_validate(question) for question in session["questions"]]
 
 
-async def get_session(conn: AsyncConnection, session_id: uuid.UUID) -> SessionResponse:
-    session = await _load(conn, session_id)
-    questions = _questions(session)
-    answers = [Answer.model_validate(answer) for answer in session["answers"] or []]
+def _answers(session: Mapping[str, Any]) -> list[Answer]:
+    return [Answer.model_validate(answer) for answer in session["answers"] or []]
+
+
+def session_conditions(session: Mapping[str, Any]) -> AppliedConditions:
+    """1차 조건에 저장된 답을 반영한 조건."""
     initial = AppliedConditions.model_validate(session["conditions"])
-    conditions = apply_answers(initial, questions, answers)
+    return apply_answers(initial, _questions(session), _answers(session))
+
+
+async def get_session(conn: AsyncConnection, session_id: uuid.UUID) -> SessionResponse:
+    session = await load_session(conn, session_id)
+    questions = _questions(session)
+    answers = _answers(session)
+    conditions = session_conditions(session)
     return SessionResponse(
         session_id=session["id"],
         expires_at=session["expires_at"],
@@ -145,7 +154,7 @@ async def answer_session(
     후보가 바뀌므로 선정 사유 캐시를 비우고, 답변 리비전을 올려 진행 중이던 사유 생성이
     이전 답 기준 결과를 캐시에 쓰지 못하게 한다.
     """
-    session = await _load(conn, session_id)
+    session = await load_session(conn, session_id)
     questions = _questions(session)
     initial = AppliedConditions.model_validate(session["conditions"])
     conditions = apply_answers(initial, questions, request.answers)

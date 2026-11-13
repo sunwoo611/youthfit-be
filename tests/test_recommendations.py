@@ -1,5 +1,6 @@
 """선정 사유. 검증·템플릿은 순수 함수로, 캐시·동시 답변 흐름은 롤백 트랜잭션에서 확인한다."""
 
+import json
 import uuid
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
@@ -29,13 +30,20 @@ from app.schemas.candidates import (
     PolicyCandidate,
     PolicyEligibility,
 )
-from app.schemas.sessions import CachedReason, ReasonSource, SessionCreateRequest
+from app.schemas.sessions import (
+    Answer,
+    AnswerRequest,
+    CachedReason,
+    QuestionVariable,
+    ReasonSource,
+    SessionCreateRequest,
+)
 from app.services import recommendation_service as svc
 from app.services.policy_status import Availability
 from app.services.recommendation_service import LlmReason, LlmReasons, Target
-from app.services.session_service import SessionNotFoundError, create_session
+from app.services.session_service import SessionNotFoundError, answer_session, create_session
 from tests.test_candidates import TODAY, _insert_policies
-from tests.test_sessions import _seoul_wide
+from tests.test_sessions import QUERY, _insert_mixed, _seoul_wide
 
 SESSIONS = QuestionSession.__table__
 USAGE = Usage(model="fake", input_tokens=1, output_tokens=1, latency_ms=1)
@@ -398,13 +406,60 @@ async def test_recommend_returns_db_cards_with_llm_reasons_and_reuses_cache(
     assert len(llm.prompts) == 1
 
 
-async def test_recommend_without_llm_uses_template_and_does_not_cache(db_conn: AsyncConnection):
+@pytest.mark.parametrize(
+    "make_llm", [lambda: None, lambda: FakeLlm(error=True)], ids=["no-key", "llm-error"]
+)
+async def test_recommend_without_usable_llm_uses_template_and_does_not_cache(
+    db_conn: AsyncConnection, make_llm: Callable[[], FakeLlm | None]
+):
     session_id = await _session(db_conn)
 
-    result = await svc.recommend(_connect(db_conn), None, session_id)
+    result = await svc.recommend(_connect(db_conn), make_llm(), session_id)
 
+    assert len(result.items) == svc.RECOMMEND_LIMIT
     assert {item.reason_source for item in result.items} == {ReasonSource.TEMPLATE}
     assert await _cache(db_conn, session_id) is None
+
+
+class EchoLlm(FakeLlm):
+    """프롬프트에 들어온 정책마다 `prefix` 를 붙인 사유를 돌려준다."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.prefix = ""
+
+    async def parse(self, system: str, user: str, schema: type[BaseModel]) -> tuple[Any, Usage]:
+        self.items = [
+            LlmReason(plcy_no=policy["plcy_no"], reason=f"{self.prefix}사유", check_points=[])
+            for policy in json.loads(user)["정책"]
+        ]
+        return await super().parse(system, user, schema)
+
+
+async def test_answer_resubmission_makes_recommend_write_new_reasons(db_conn: AsyncConnection):
+    await _insert_mixed(db_conn)
+    created = await create_session(db_conn, SessionCreateRequest(query=QUERY), TODAY)
+    session_id = created.session_id
+    (marriage,) = [q for q in created.questions if q.variable is QuestionVariable.MARRIAGE]
+    llm = EchoLlm()
+    llm.prefix = "첫 "
+    first = await svc.recommend(_connect(db_conn), llm, session_id)
+    assert {item.reason for item in first.items} == {"첫 사유"}
+
+    answer = Answer(question_id=marriage.id, values=["married"])
+    await answer_session(db_conn, session_id, AnswerRequest(answers=[answer]))
+    llm.prefix = "새 "
+    second = await svc.recommend(_connect(db_conn), llm, session_id)
+
+    assert len(llm.prompts) == 2
+    profiles = [json.loads(prompt)["사용자 조건"] for prompt in llm.prompts]
+    assert "혼인" not in profiles[0]
+    assert profiles[1]["혼인"] == "기혼"
+    assert {item.reason for item in second.items} == {"새 사유"}
+    assert {reason["reason"] for reason in await _cache(db_conn, session_id)} == {"새 사유"}
+
+    assert await svc.recommend(_connect(db_conn), llm, session_id) == second
+    assert len(llm.prompts) == 2
 
 
 @pytest.mark.parametrize(

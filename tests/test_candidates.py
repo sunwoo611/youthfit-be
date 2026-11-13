@@ -338,10 +338,10 @@ async def test_sigungu_filters_partial_policies_and_ranks_mine_with_sido(
         _policy("NATIONAL", sido_codes=["11", "41"], sigungu_codes=NATIONAL),
     )
     result = await search_candidates(db_conn, _conditions(sigungu_codes=["11110"]), TODAY)
+    # 시도 전체 정책도 내 시군구가 빠져 있으면 지운다. 전국 정책은 남긴다.
     assert [(item.plcy_no, item.eligibility.region_scope) for item in result.policies.items] == [
         ("MINE", "sigungu"),
         ("SIDO-ALL", "sido"),
-        ("SIDO-NOT-MINE", "sido"),
         ("NATIONAL", "national"),
     ]
 

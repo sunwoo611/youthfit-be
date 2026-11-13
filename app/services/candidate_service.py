@@ -255,9 +255,11 @@ def _policy_filters(
             clauses.append(clause)
         filters.append(or_(*clauses))
     if conditions.sigungu_codes:
+        # 시도 전체 정책에서 빠진 시군은 불참으로 본다(예: 경기도 청년기본소득의 성남·고양).
+        # 전국 정책은 코드 누락이 데이터 오류일 수 있어 거르지 않는다 (2026-11-02 journal).
         filters.append(
             or_(
-                region_rank != REGION_SIGUNGU,
+                region_rank == REGION_NATIONAL,
                 Policy.sigungu_codes.overlap(list(conditions.sigungu_codes)),
             )
         )

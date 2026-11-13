@@ -45,7 +45,8 @@ def _row(**overrides: object) -> dict:
         "school_codes": [],
         "earn_cond_code": None,
         "earn_max": None,
-        "region_rank": REGION_SIDO,
+        # 시군구 질문에 영향을 주지 않는 전국 정책을 기본으로 둔다.
+        "region_rank": REGION_NATIONAL,
         "sigungu_codes": [],
     }
     row.update(overrides)
@@ -208,7 +209,11 @@ def test_sigungu_option_matches_districts_and_sido_wide_code():
     assert not keeps(suwon_gu, "41130")
     assert keeps(hwaseong_gu, "41590")
     assert all(keeps(daejeon_all, code) for code in sigungu.SIGUNGU["30"])
-    assert keeps(_row(region_rank=REGION_SIDO, sigungu_codes=["41113"]), "41130")
+    # 시도 전체 정책도 내 시군이 빠져 있으면 지우고, 전국 정책은 코드와 무관하게 남긴다.
+    gyeonggi_but_seongnam = [c for c in sigungu.SIGUNGU["41"] if c != "41130"]
+    assert keeps(_row(region_rank=REGION_SIDO, sigungu_codes=gyeonggi_but_seongnam), "41110")
+    assert not keeps(_row(region_rank=REGION_SIDO, sigungu_codes=gyeonggi_but_seongnam), "41130")
+    assert keeps(_row(region_rank=REGION_NATIONAL, sigungu_codes=["41113"]), "41130")
 
 
 def test_sigungu_table_codes_are_consistent():
@@ -289,6 +294,8 @@ NATIONAL_REGION = (list(codes.SIDO), [f"{i:05d}" for i in range(codes.REGION_FRE
 REGIONS: dict[str, list[tuple[list[str], list[str]]]] = {
     "11": [
         (["11"], list(sigungu.SIGUNGU["11"])),
+        # 시도 전체(80% 이상)지만 종로구가 빠진 정책
+        (["11"], list(sigungu.SIGUNGU["11"])[1:]),
         (["11"], ["11110"]),
         (["11"], ["11140", "11200"]),
         (["11"], ["11000"]),
@@ -297,6 +304,12 @@ REGIONS: dict[str, list[tuple[list[str], list[str]]]] = {
     # 구가 있는 시는 정책에 시 코드(41110)와 구 코드(41113)가 따로 온다.
     "41": [
         (["41"], list(sigungu.SIGUNGU["41"])),
+        # 시도 전체지만 성남시(시 코드)가 빠지고 수원시는 구 코드로만 나열한 정책
+        (
+            ["41"],
+            [c for c in sigungu.SIGUNGU["41"] if c not in ("41130", "41110")]
+            + ["41111", "41113", "41115", "41117"],
+        ),
         (["41"], ["41113"]),
         (["41"], ["41110"]),
         (["41"], ["41595", "41130"]),

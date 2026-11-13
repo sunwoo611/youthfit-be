@@ -17,7 +17,7 @@ from app.services.candidate_service import (
     EARN_MAX_TRUSTED_MIN,
     INCOME_BUCKET_FLOOR,
     MARRIAGE_CODE,
-    REGION_SIGUNGU,
+    REGION_NATIONAL,
     SCHOOL_CODE,
     SCHOOL_MATCH,
 )
@@ -70,7 +70,7 @@ def _keeps_income(row: Row, value: str) -> bool:
 
 
 def _keeps_sigungu(row: Row, value: str) -> bool:
-    if row["region_rank"] != REGION_SIGUNGU:
+    if row["region_rank"] == REGION_NATIONAL:
         return True
     return not set(sigungu.match_codes(value)).isdisjoint(row["sigungu_codes"])
 

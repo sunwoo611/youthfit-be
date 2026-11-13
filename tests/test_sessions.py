@@ -163,15 +163,20 @@ async def client(db_conn: AsyncConnection) -> AsyncIterator[AsyncClient]:
         app.dependency_overrides.clear()
 
 
+def _seoul_wide(plcy_no: str, **overrides: object) -> dict:
+    """서울 시군구를 모두 나열한 시도 전체 정책. 시군구 질문이 생기지 않는다."""
+    return _policy(plcy_no, sigungu_codes=list(sigungu.SIGUNGU["11"]), **overrides)
+
+
 async def _insert_mixed(conn: AsyncConnection) -> None:
-    """제한 없음 20, 기혼 전용 5, 대학 재학 전용 5. 학력(7/8 선택지) > 혼인(1/2) 순으로 묻는다."""
+    """제한 없음 20, 기혼 전용 5, 대학 재학 전용 5. 학력(6/8 선택지) > 혼인(1/2) 순으로 묻는다."""
     # 한 번에 넣으면 첫 행의 컬럼만 쓰이므로 컬럼 구성이 다른 묶음은 따로 넣는다.
-    await _insert_policies(conn, *(_policy(f"P-{i:02d}") for i in range(20)))
+    await _insert_policies(conn, *(_seoul_wide(f"P-{i:02d}") for i in range(20)))
     await _insert_policies(
-        conn, *(_policy(f"MARRIED-{i}", marriage_code="0055001") for i in range(5))
+        conn, *(_seoul_wide(f"MARRIED-{i}", marriage_code="0055001") for i in range(5))
     )
     await _insert_policies(
-        conn, *(_policy(f"COLLEGE-{i}", school_codes=["0049005"]) for i in range(5))
+        conn, *(_seoul_wide(f"COLLEGE-{i}", school_codes=["0049005"]) for i in range(5))
     )
 
 
@@ -292,7 +297,7 @@ async def test_questions_are_scored_over_all_candidates_not_top_50(
 
 async def test_requery_uses_session_as_of(client: AsyncClient, db_conn: AsyncConnection):
     await _insert_mixed(db_conn)
-    await _insert_policies(db_conn, _policy("ENDS-TODAY", apply_end=TODAY))
+    await _insert_policies(db_conn, _seoul_wide("ENDS-TODAY", apply_end=TODAY))
     session_id = (await _create(client))["session_id"]
 
     app.dependency_overrides[get_today] = lambda: FUTURE

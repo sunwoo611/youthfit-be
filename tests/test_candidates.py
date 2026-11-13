@@ -19,8 +19,11 @@ from app.schemas.candidates import (
     AppliedConditions,
     CandidateRequest,
     EmploymentStatus,
+    IncomeBucket,
     Interest,
     LinkSource,
+    Marriage,
+    School,
 )
 from app.services.candidate_service import (
     ONTONG_DETAIL_URL,
@@ -30,6 +33,7 @@ from app.services.candidate_service import (
     find_candidates,
     policy_official_link,
     resolve_conditions,
+    search_candidates,
 )
 from app.services.policy_status import Availability, policy_availability
 
@@ -83,6 +87,32 @@ def test_explicit_interests_are_not_extended_by_query():
 def test_unknown_sido_is_rejected():
     with pytest.raises(ValidationError):
         CandidateRequest(sido_code="29")
+
+
+def _conditions(sido_code: str | None = "11", **overrides: object) -> AppliedConditions:
+    return AppliedConditions(
+        age=None,
+        sido_code=sido_code,
+        employment_status=None,
+        interests=[],
+        from_query=[],
+        **overrides,
+    )
+
+
+def test_question_conditions_default_to_unknown():
+    conditions = resolve_conditions(CandidateRequest(query="서울 사는 25살 취준생"))
+    assert conditions.sigungu_codes == []
+    assert (conditions.marriage, conditions.school, conditions.income_bucket) == (None,) * 3
+
+
+@pytest.mark.parametrize(
+    ("sido_code", "sigungu_codes"),
+    [("11", ["41110"]), (None, ["11110"]), ("11", ["1111"]), ("11", ["11a10"])],
+)
+def test_sigungu_outside_sido_is_rejected(sido_code: str | None, sigungu_codes: list[str]):
+    with pytest.raises(ValidationError):
+        _conditions(sido_code, sigungu_codes=sigungu_codes)
 
 
 # --- DB 통합 ---
@@ -195,6 +225,128 @@ async def test_filters_age_region_employment_and_interest(db_conn: AsyncConnecti
         "OK-NATIONAL",
         "OK-EDU-2025",
     }
+
+
+async def _searched_nos(conn: AsyncConnection, conditions: AppliedConditions) -> list[str]:
+    result = await search_candidates(conn, conditions, TODAY)
+    return [item.plcy_no for item in result.policies.items]
+
+
+async def test_marriage_filter_keeps_unrestricted(db_conn: AsyncConnection):
+    await _insert_policies(
+        db_conn,
+        _policy("M-NULL", marriage_code=None),
+        _policy("M-ANY", marriage_code=codes.MARRIAGE_ANY),
+        _policy("M-SINGLE", marriage_code="0055002"),
+        _policy("M-MARRIED", marriage_code="0055001"),
+    )
+    single = _conditions(marriage=Marriage.SINGLE)
+    married = _conditions(marriage=Marriage.MARRIED)
+    assert set(await _searched_nos(db_conn, single)) == {"M-NULL", "M-ANY", "M-SINGLE"}
+    assert set(await _searched_nos(db_conn, married)) == {"M-NULL", "M-ANY", "M-MARRIED"}
+
+
+async def test_school_filter_treats_etc_as_unrestricted(db_conn: AsyncConnection):
+    await _insert_policies(
+        db_conn,
+        _policy("S-EMPTY", school_codes=[]),
+        _policy("S-ANY", school_codes=[codes.SCHOOL_ANY]),
+        _policy("S-ETC", school_codes=[codes.SCHOOL_ETC]),
+        _policy("S-MATCH", school_codes=["0049005", "0049007"]),
+        _policy("S-HIGH-ONLY", school_codes=["0049004"]),
+    )
+    conditions = _conditions(school=School.COLLEGE_ENROLLED)
+    assert set(await _searched_nos(db_conn, conditions)) == {
+        "S-EMPTY",
+        "S-ANY",
+        "S-ETC",
+        "S-MATCH",
+    }
+
+
+@pytest.mark.parametrize(
+    ("school", "expected"),
+    [
+        # 졸업 예정자는 재학 중이라 재학 대상 정책도 받는다.
+        (School.HIGH_SCHOOL_EXPECTED, {"S-HS-ENROLLED", "S-GRADUATES"}),
+        (School.COLLEGE_EXPECTED, {"S-COLLEGE-ENROLLED", "S-GRADUATES"}),
+        # 석·박사는 학사를 가지므로 대졸 대상(특성화대학원 등)을 받는다.
+        (School.GRADUATE_SCHOOL, {"S-COLLEGE-GRADUATED", "S-GRADUATES"}),
+        # 재학생은 고졸로 넓히지 않는다(재학생 제외 정책이 대학 재학만 빼고 나열).
+        (School.COLLEGE_ENROLLED, {"S-COLLEGE-ENROLLED"}),
+        # 대졸은 고졸로 넓히지 않는다(고졸 전용 정책).
+        (School.COLLEGE_GRADUATED, {"S-COLLEGE-GRADUATED", "S-GRADUATES"}),
+    ],
+)
+async def test_school_answer_covers_contained_statuses_only(
+    db_conn: AsyncConnection, school: School, expected: set[str]
+):
+    await _insert_policies(
+        db_conn,
+        _policy("S-HS-ENROLLED", school_codes=["0049002"]),
+        _policy("S-HS-ONLY", school_codes=["0049004"]),
+        _policy("S-COLLEGE-ENROLLED", school_codes=["0049005"]),
+        _policy("S-COLLEGE-GRADUATED", school_codes=["0049007"]),
+        _policy("S-GRADUATES", school_codes=["0049003", "0049004", "0049006", "0049007"]),
+    )
+    assert set(await _searched_nos(db_conn, _conditions(school=school))) == expected
+
+
+async def test_income_filter_uses_only_trusted_range_max(db_conn: AsyncConnection):
+    def earn(code: str | None, earn_max: int | None) -> dict:
+        return {"earn_cond_code": code, "earn_max": earn_max}
+
+    await _insert_policies(
+        db_conn,
+        _policy("I-NULL", **earn(None, None)),
+        _policy("I-ANY", **earn(codes.EARN_ANY, None)),
+        _policy("I-ETC", **earn("0043003", None)),
+        _policy("I-RANGE-NULL", **earn(codes.EARN_RANGE, None)),
+        _policy("I-ABOVE", **earn(codes.EARN_RANGE, 3500)),
+        _policy("I-EQUAL", **earn(codes.EARN_RANGE, 3000)),
+        _policy("I-BELOW", **earn(codes.EARN_RANGE, 2000)),
+        _policy("I-WON", **earn(codes.EARN_RANGE, 43_056_240)),
+        _policy("I-MONTHLY", **earn(codes.EARN_RANGE, 534)),
+    )
+    everyone = {
+        "I-NULL",
+        "I-ANY",
+        "I-ETC",
+        "I-RANGE-NULL",
+        "I-ABOVE",
+        "I-EQUAL",
+        "I-BELOW",
+        "I-WON",
+        "I-MONTHLY",
+    }
+    low = _conditions(income_bucket=IncomeBucket.UP_TO_3000)
+    middle = _conditions(income_bucket=IncomeBucket.UP_TO_5000)
+    assert set(await _searched_nos(db_conn, low)) == everyone
+    assert set(await _searched_nos(db_conn, middle)) == everyone - {"I-EQUAL", "I-BELOW"}
+
+
+async def test_sigungu_filters_partial_policies_and_ranks_mine_with_sido(
+    db_conn: AsyncConnection,
+):
+    seoul_all = ["11110", *(f"11{i:03d}" for i in range(200, 224))]
+    await _insert_policies(
+        db_conn,
+        _policy("SIDO-ALL", sigungu_codes=seoul_all),
+        _policy("SIDO-NOT-MINE", sigungu_codes=seoul_all[1:]),
+        _policy("MINE", sigungu_codes=["11110", "11200"], apply_end=date(2026, 11, 1)),
+        _policy("OTHER", sigungu_codes=["11200"], apply_end=date(2026, 11, 1)),
+        _policy("NATIONAL", sido_codes=["11", "41"], sigungu_codes=NATIONAL),
+    )
+    result = await search_candidates(db_conn, _conditions(sigungu_codes=["11110"]), TODAY)
+    # 시도 전체 정책도 내 시군구가 빠져 있으면 지운다. 전국 정책은 남긴다.
+    assert [(item.plcy_no, item.eligibility.region_scope) for item in result.policies.items] == [
+        ("MINE", "sigungu"),
+        ("SIDO-ALL", "sido"),
+        ("NATIONAL", "national"),
+    ]
+
+    unknown = await _searched_nos(db_conn, _conditions())
+    assert unknown == ["SIDO-ALL", "SIDO-NOT-MINE", "NATIONAL", "MINE", "OTHER"]
 
 
 async def test_without_region_only_national_policies(db_conn: AsyncConnection):

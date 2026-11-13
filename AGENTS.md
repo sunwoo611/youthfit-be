@@ -35,4 +35,5 @@ uv run ruff check .
 ## 현재 상태
 
 2차 Build 완료: Alembic 스키마, 온통청년·금감원 일 배치 적재, 품질 리포트, 1차 룰 필터 `POST /v1/candidates`.
-다음(3차): 세션, LLM 역질문(후보를 가르는 자격 변수, 시군구 포함), 선정 사유 서술.
+3차 진행 중: 역질문 세션 LLM 없는 E2E 완료. `/v1/sessions` 생성·조회·답변, `sessions` 테이블, 서버가 기대 제거율로 고른 혼인·학력·소득·시군구 템플릿 질문, 답변 반영 재필터(`docs/decisions/008-question-variable-selection.md`).
+다음: LLM 질문 문구화(서버가 고른 변수·선택지는 고정), LLM 선정 사유 서술, 통합 패키지(지원금+적금).

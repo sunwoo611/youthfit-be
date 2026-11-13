@@ -1,7 +1,7 @@
 from functools import lru_cache
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from pydantic import field_validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     # 쉼표로 구분한 브라우저 허용 출처. 주소가 바뀌는 Vercel 프리뷰는 정규식으로 허용한다.
     cors_origins: str = "http://localhost:3000"
     cors_origin_regex: str | None = None
+
+    # 역질문 세션 보관 기간. 일 배치가 생성 후 이 기간이 지난 세션을 지운다.
+    session_retention_days: int = Field(default=30, ge=1)
 
     # 2차 Build 이후 사용 (공공 API 수집 / LLM)
     ontong_youth_api_key: str | None = None

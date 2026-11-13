@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import health
-from app.api.v1 import candidates
+from app.api.v1 import candidates, sessions
 from app.core.config import Settings, get_settings
 from app.core.database import dispose_engine
 
@@ -27,6 +27,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.include_router(health.router)
     app.include_router(candidates.router)
+    app.include_router(sessions.router)
     return app
 
 

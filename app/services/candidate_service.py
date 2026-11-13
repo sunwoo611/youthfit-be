@@ -11,6 +11,7 @@ from typing import Any
 
 from sqlalchemy import (
     ColumnElement,
+    RowMapping,
     Select,
     and_,
     case,
@@ -29,13 +30,16 @@ from app.schemas.candidates import (
     CandidateRequest,
     CandidateResponse,
     EmploymentStatus,
+    IncomeBucket,
     Interest,
     LinkSource,
+    Marriage,
     PolicyCandidate,
     PolicyCandidates,
     PolicyEligibility,
     SavingCandidate,
     SavingCandidates,
+    School,
 )
 from app.services.policy_status import Availability
 from app.services.query_hints import extract_hints
@@ -54,6 +58,51 @@ EMPLOYMENT_JOB_CODE: dict[EmploymentStatus, str] = {
     EmploymentStatus.SHORT_TERM: "0013007",
     EmploymentStatus.FARMER: "0013008",
 }
+
+MARRIAGE_CODE: dict[Marriage, str] = {
+    Marriage.MARRIED: "0055001",
+    Marriage.SINGLE: "0055002",
+}
+
+SCHOOL_CODE: dict[School, str] = {
+    School.BELOW_HIGH_SCHOOL: "0049001",
+    School.HIGH_SCHOOL_ENROLLED: "0049002",
+    School.HIGH_SCHOOL_EXPECTED: "0049003",
+    School.HIGH_SCHOOL_GRADUATED: "0049004",
+    School.COLLEGE_ENROLLED: "0049005",
+    School.COLLEGE_EXPECTED: "0049006",
+    School.COLLEGE_GRADUATED: "0049007",
+    School.GRADUATE_SCHOOL: "0049008",
+}
+
+# 답이 함께 해당하는 학력 코드. 졸업 예정자는 재학 중이고, 석·박사는 학사를 가진다.
+# 재학 → 고졸, 대졸 → 고졸로는 넓히지 않는다. 재학생 제외(국민취업지원제도 등)와
+# 고졸 전용 정책이 그 차이로 구분돼 있다 (2026-11-02 journal).
+SCHOOL_MATCH: dict[School, tuple[str, ...]] = {
+    **{school: (code,) for school, code in SCHOOL_CODE.items()},
+    School.HIGH_SCHOOL_EXPECTED: (
+        SCHOOL_CODE[School.HIGH_SCHOOL_EXPECTED],
+        SCHOOL_CODE[School.HIGH_SCHOOL_ENROLLED],
+    ),
+    School.COLLEGE_EXPECTED: (
+        SCHOOL_CODE[School.COLLEGE_EXPECTED],
+        SCHOOL_CODE[School.COLLEGE_ENROLLED],
+    ),
+    School.GRADUATE_SCHOOL: (
+        SCHOOL_CODE[School.GRADUATE_SCHOOL],
+        SCHOOL_CODE[School.COLLEGE_GRADUATED],
+    ),
+}
+
+# 구간 하한(만원, 초과). 소득 상한이 이 값 이하인 정책은 확실히 해당하지 않는다.
+INCOME_BUCKET_FLOOR: dict[IncomeBucket, int] = {
+    IncomeBucket.UP_TO_3000: 0,
+    IncomeBucket.UP_TO_5000: 3000,
+    IncomeBucket.UP_TO_7000: 5000,
+    IncomeBucket.OVER_7000: 7000,
+}
+# earn_max 에는 원 단위·월소득 값이 섞여 있어 만원 단위 연소득으로 읽히는 범위만 쓴다.
+EARN_MAX_TRUSTED_MIN, EARN_MAX_TRUSTED_MAX = 1000, 20000
 
 # 대분류는 2025년(복지문화·교육·참여권리)과 2026년(금융･복지･문화 등) 체계가 섞여 있다.
 # 구분점은 원문 그대로 반각 가운뎃점(U+FF65)이다.
@@ -168,7 +217,10 @@ def region_rank_expr(sido_code: str | None) -> ColumnElement[int]:
     )
 
 
-def _policy_filters(conditions: AppliedConditions) -> list[ColumnElement[bool]]:
+def _policy_filters(
+    conditions: AppliedConditions, region_rank: ColumnElement[int]
+) -> list[ColumnElement[bool]]:
+    """역질문 답(혼인·학력·소득·시군구)으로는 확실히 해당하지 않는 정책만 지운다."""
     filters: list[ColumnElement[bool]] = []
     if conditions.age is not None:
         age = conditions.age
@@ -202,16 +254,61 @@ def _policy_filters(conditions: AppliedConditions) -> list[ColumnElement[bool]]:
                 clause = and_(clause, Policy.subcategories.overlap(list(subcategories)))
             clauses.append(clause)
         filters.append(or_(*clauses))
+    if conditions.sigungu_codes:
+        # 시도 전체 정책에서 빠진 시군은 불참으로 본다(예: 경기도 청년기본소득의 성남·고양).
+        # 전국 정책은 코드 누락이 데이터 오류일 수 있어 거르지 않는다 (2026-11-02 journal).
+        filters.append(
+            or_(
+                region_rank == REGION_NATIONAL,
+                Policy.sigungu_codes.overlap(list(conditions.sigungu_codes)),
+            )
+        )
+    if conditions.marriage is not None:
+        filters.append(
+            or_(
+                Policy.marriage_code.is_(None),
+                Policy.marriage_code.in_([codes.MARRIAGE_ANY, MARRIAGE_CODE[conditions.marriage]]),
+            )
+        )
+    if conditions.school is not None:
+        # 학력 8개를 전부 나열한 정책은 사용자 코드와 겹치므로 따로 처리하지 않는다.
+        filters.append(
+            or_(
+                func.cardinality(Policy.school_codes) == 0,
+                Policy.school_codes.overlap(
+                    [codes.SCHOOL_ANY, codes.SCHOOL_ETC, *SCHOOL_MATCH[conditions.school]]
+                ),
+            )
+        )
+    floor = INCOME_BUCKET_FLOOR[conditions.income_bucket] if conditions.income_bucket else 0
+    if floor > 0:
+        filters.append(
+            or_(
+                Policy.earn_cond_code.is_distinct_from(codes.EARN_RANGE),
+                Policy.earn_max.is_(None),
+                Policy.earn_max < EARN_MAX_TRUSTED_MIN,
+                Policy.earn_max > EARN_MAX_TRUSTED_MAX,
+                Policy.earn_max > floor,
+            )
+        )
     return filters
 
 
-def policy_query(conditions: AppliedConditions, today: date, limit: int = POLICY_LIMIT) -> Select:
+def policy_query(
+    conditions: AppliedConditions, today: date, limit: int | None = POLICY_LIMIT
+) -> Select:
     status = availability_expr(today)
     status_rank = case(
         *((status == s.value, rank) for s, rank in _STATUS_RANK.items()),
         else_=len(_STATUS_RANK),
     )
     region_rank = region_rank_expr(conditions.sido_code)
+    # 시군구를 알면 남은 일부 시군구 정책은 내 시군구 대상이므로 시도 전체와 같이 정렬한다.
+    region_sort = (
+        case((region_rank == REGION_SIGUNGU, REGION_SIDO), else_=region_rank)
+        if conditions.sigungu_codes
+        else region_rank
+    )
     deadline = func.least(Policy.apply_end, Policy.biz_end)
     name_key = func.regexp_replace(Policy.name, _NAME_NOISE, literal(""), "g")
     # 다른 시군이 같은 이름으로 운영하는 별개 사업(예: 칠곡군·울진군 청년 이사비)은 합치지 않는다.
@@ -232,25 +329,32 @@ def policy_query(conditions: AppliedConditions, today: date, limit: int = POLICY
             Policy.sido_codes,
             Policy.sigungu_codes,
             Policy.job_codes,
+            Policy.marriage_code,
+            Policy.school_codes,
+            Policy.special_codes,
+            Policy.earn_cond_code,
+            Policy.earn_min,
+            Policy.earn_max,
             Policy.apply_url,
             Policy.ref_urls,
             status.label("availability"),
             status_rank.label("status_rank"),
             region_rank.label("region_rank"),
+            region_sort.label("region_sort"),
             deadline.label("deadline"),
             func.row_number()
             .over(
                 partition_by=(name_key, sigungu_key),
                 order_by=(
                     status_rank,
-                    region_rank,
+                    region_sort,
                     deadline.asc().nulls_last(),
                     Policy.plcy_no,
                 ),
             )
             .label("dup_rank"),
         )
-        .where(status != Availability.CLOSED.value, *_policy_filters(conditions))
+        .where(status != Availability.CLOSED.value, *_policy_filters(conditions, region_rank))
         .subquery("ranked")
     )
     return (
@@ -258,7 +362,7 @@ def policy_query(conditions: AppliedConditions, today: date, limit: int = POLICY
         .where(ranked.c.dup_rank == 1)
         .order_by(
             ranked.c.status_rank,
-            ranked.c.region_rank,
+            ranked.c.region_sort,
             ranked.c.deadline.asc().nulls_last(),
             ranked.c.plcy_no,
         )
@@ -364,15 +468,39 @@ def _saving_candidate(row: Mapping[str, Any]) -> SavingCandidate:
 async def find_candidates(
     conn: AsyncConnection, request: CandidateRequest, today: date
 ) -> CandidateResponse:
-    conditions = resolve_conditions(request)
-    policy_rows = (await conn.execute(policy_query(conditions, today))).mappings().all()
+    return await search_candidates(conn, resolve_conditions(request), today)
+
+
+async def search_candidates(
+    conn: AsyncConnection, conditions: AppliedConditions, today: date
+) -> CandidateResponse:
+    rows = await fetch_policy_rows(conn, conditions, today)
+    return await build_response(conn, conditions, today, rows)
+
+
+async def fetch_policy_rows(
+    conn: AsyncConnection,
+    conditions: AppliedConditions,
+    today: date,
+    limit: int | None = POLICY_LIMIT,
+) -> Sequence[RowMapping]:
+    return (await conn.execute(policy_query(conditions, today, limit))).mappings().all()
+
+
+async def build_response(
+    conn: AsyncConnection,
+    conditions: AppliedConditions,
+    today: date,
+    policy_rows: Sequence[Mapping[str, Any]],
+) -> CandidateResponse:
+    """정책 카드는 정렬된 행의 앞 POLICY_LIMIT 건만 만든다."""
     saving_rows = (await conn.execute(saving_query())).mappings().all()
     return CandidateResponse(
         as_of=today,
         conditions=conditions,
         policies=PolicyCandidates(
             total=policy_rows[0]["total"] if policy_rows else 0,
-            items=[_policy_candidate(row) for row in policy_rows],
+            items=[_policy_candidate(row) for row in policy_rows[:POLICY_LIMIT]],
         ),
         savings=SavingCandidates(
             total=saving_rows[0]["total"] if saving_rows else 0,

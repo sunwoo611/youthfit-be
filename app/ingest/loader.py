@@ -60,18 +60,16 @@ async def _count(conn: AsyncConnection, table: Table, *where: ColumnElement[bool
     return (await conn.scalar(stmt)) or 0
 
 
-async def _prune_stale(
-    conn: AsyncConnection, table: Table, scope: Sequence[ColumnElement[bool]], existing: int
-) -> PruneResult:
+async def _prune_stale(conn: AsyncConnection, table: Table, existing: int) -> PruneResult:
     """이번 트랜잭션에서 갱신되지 않은 행을 상한 안에서만 삭제한다.
 
     같은 트랜잭션의 now() 는 고정이라, 이번에 upsert 된 행만 ingested_at == now() 이다.
     """
-    stale_where = [*scope, table.c.ingested_at < func.now()]
-    stale = await _count(conn, table, *stale_where)
+    stale_where = table.c.ingested_at < func.now()
+    stale = await _count(conn, table, stale_where)
     if stale == 0 or not prune_allowed(stale, existing):
         return PruneResult(existing=existing, stale=stale, deleted=0)
-    result = await conn.execute(delete(table).where(*stale_where))
+    result = await conn.execute(delete(table).where(stale_where))
     return PruneResult(existing=existing, stale=stale, deleted=result.rowcount or 0)
 
 
@@ -102,7 +100,7 @@ async def load_policies(
     """정책 upsert. prune 이면 이번에 갱신되지 않은 정책을 상한 안에서 삭제한다."""
     existing = await _count(conn, _policies) if prune else 0
     upserted = await upsert_rows(conn, _policies, rows, ["plcy_no"])
-    pruned = await _prune_stale(conn, _policies, [], existing) if prune else None
+    pruned = await _prune_stale(conn, _policies, existing) if prune else None
     return upserted, pruned
 
 

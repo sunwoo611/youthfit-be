@@ -105,7 +105,7 @@ async def _run(
 ) -> SourceReport:
     """ingest_runs 에 시작·종료를 기록한다.
 
-    일반 예외는 failed 로 기록하고 삼켜서 다른 소스가 계속 돌게 한다.
+    일반 예외는 failed 로 기록하고 삼켜서, 호출자가 실행 결과를 출력한 뒤 종료 코드로 알리게 한다.
     Ctrl+C·작업 취소는 cancelled 로 기록한 뒤 다시 올려 프로그램을 멈춘다.
     """
     run_id = await loader.start_run(engine, report.source)

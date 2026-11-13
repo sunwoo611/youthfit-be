@@ -8,6 +8,15 @@ from app.core.config import get_settings
 from app.models import Policy, QuestionSession
 
 
+@pytest.fixture(autouse=True)
+def _no_real_llm(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`.env` 에 OPENAI_API_KEY 가 있어도 테스트가 실제 API 를 부르지 않게 한다.
+
+    가짜 클라이언트가 필요한 테스트는 `dependency_overrides[get_llm_client]` 로 바꿔 끼운다.
+    """
+    monkeypatch.setattr("app.api.deps.get_openai_client", lambda _settings: None)
+
+
 @pytest.fixture
 async def db_conn() -> AsyncIterator[AsyncConnection]:
     """정책·세션 테이블을 비운 트랜잭션. 끝나면 롤백해 적재 데이터를 건드리지 않는다."""

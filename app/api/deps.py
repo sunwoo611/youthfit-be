@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 from app.core.config import get_settings
 from app.core.database import get_engine
 from app.ingest.normalize import KST
+from app.llm.client import LlmClient, get_openai_client
 
 
 async def get_db_connection() -> AsyncIterator[AsyncConnection]:
@@ -34,6 +35,11 @@ async def get_db_transaction(
     """
     async with conn.begin():
         yield conn
+
+
+def get_llm_client() -> LlmClient | None:
+    """OPENAI_API_KEY 미설정이면 None. 서비스는 None 이면 템플릿 경로를 쓴다."""
+    return get_openai_client(get_settings())
 
 
 def get_today() -> date:

@@ -7,12 +7,14 @@ from app.api import health
 from app.api.v1 import candidates, sessions
 from app.core.config import Settings, get_settings
 from app.core.database import dispose_engine
+from app.llm.client import close_openai_client
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     yield
     await dispose_engine()
+    await close_openai_client()
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:

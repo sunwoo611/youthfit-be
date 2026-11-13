@@ -1,13 +1,13 @@
 """역질문 세션 요청·응답. 질문 변수와 선택지는 서버가 정한다(LLM 출력 아님)."""
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from enum import StrEnum
 from typing import Annotated, Literal, Self
 
 from pydantic import BaseModel, Field, StringConstraints, model_validator
 
-from app.schemas.candidates import CandidateRequest, CandidateResponse
+from app.schemas.candidates import CandidateRequest, CandidateResponse, PolicyCandidate
 
 
 class QuestionVariable(StrEnum):
@@ -64,3 +64,30 @@ class SessionResponse(BaseModel):
     candidates: CandidateResponse = Field(
         description="1차 조건에 답을 반영한 후보. 기준일은 세션 생성일로 고정한다."
     )
+
+
+class ReasonSource(StrEnum):
+    LLM = "llm"
+    TEMPLATE = "template"
+
+
+class RecommendationReason(BaseModel):
+    reason: str
+    check_points: list[str] = Field(max_length=3, description="사용자가 직접 더 확인할 조건")
+    reason_source: ReasonSource = Field(description="LLM 실패·키 없음이면 template")
+
+
+class CachedReason(RecommendationReason):
+    """세션에 캐시하는 정책 1건의 서술. 링크·마감일 같은 DB 값은 담지 않는다."""
+
+    plcy_no: str
+
+
+class Recommendation(RecommendationReason):
+    policy: PolicyCandidate = Field(description="링크·마감일·자격은 이 DB 값만 믿는다")
+
+
+class RecommendationResponse(BaseModel):
+    session_id: uuid.UUID
+    as_of: date
+    items: list[Recommendation] = Field(description="답을 반영한 최종 후보 상위 정책")

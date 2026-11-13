@@ -18,7 +18,13 @@ from app.ingest import sigungu
 from app.main import app
 from app.models import QuestionSession
 from app.schemas.candidates import AppliedConditions, Marriage, School
-from app.schemas.sessions import Answer, AnswerRequest, Question, QuestionVariable
+from app.schemas.sessions import (
+    Answer,
+    AnswerRequest,
+    CachedReason,
+    Question,
+    QuestionVariable,
+)
 from app.services.question_engine import REGISTRY
 from app.services.session_service import InvalidAnswerError, apply_answers, delete_old_sessions
 from tests.test_candidates import FUTURE, TODAY, _insert_policies, _policy
@@ -81,6 +87,13 @@ def test_answer_request_rejects_duplicate_or_empty_answers():
         )
     with pytest.raises(ValidationError):
         Answer(question_id="q1", values=[])
+
+
+def test_cached_reason_allows_at_most_three_check_points():
+    reason = {"plcy_no": "P1", "reason": "사유", "reason_source": "template"}
+    assert CachedReason(**reason, check_points=["a", "b", "c"]).check_points == ["a", "b", "c"]
+    with pytest.raises(ValidationError):
+        CachedReason(**reason, check_points=["a", "b", "c", "d"])
 
 
 # --- 쓰기 트랜잭션 ---
@@ -227,6 +240,8 @@ async def test_create_session_stores_conditions_questions_and_initial_ids(
     assert stored["answers"] is None
     assert set(stored["initial_policy_ids"]) == _plcy_nos(body)
     assert stored["final_policy_ids"] == []
+    assert stored["answers_revision"] == 0
+    assert await _cache_is_sql_null(db_conn, body["session_id"])
     assert stored["expires_at"] - stored["created_at"] == timedelta(hours=24)
 
 
@@ -267,6 +282,36 @@ async def test_answers_narrow_candidates_and_resubmission_overwrites(
     assert got["answers"] == [{"question_id": "q2", "values": ["married"]}]
     assert got["questions"] == body["questions"]
     assert got["candidates"] == body["candidates"]
+
+
+async def _cache_is_sql_null(conn: AsyncConnection, session_id: str) -> bool:
+    """드라이버는 JSON null 도 None 으로 돌려주므로 DB 에서 직접 확인한다."""
+    return await conn.scalar(
+        select(SESSIONS.c.recommendations.is_(None)).where(SESSIONS.c.id == uuid.UUID(session_id))
+    )
+
+
+async def test_answer_resubmission_clears_cache_and_bumps_revision(
+    client: AsyncClient, db_conn: AsyncConnection
+):
+    await _insert_mixed(db_conn)
+    session_id = (await _create(client))["session_id"]
+    await _answer(client, session_id, {"q2": "single"})
+    assert (await _stored(db_conn, session_id))["answers_revision"] == 1
+    cached = CachedReason(
+        plcy_no="P-00", reason="서울 거주 청년 대상", check_points=[], reason_source="llm"
+    )
+    await db_conn.execute(
+        update(SESSIONS)
+        .where(SESSIONS.c.id == uuid.UUID(session_id))
+        .values(recommendations=[cached.model_dump(mode="json")])
+    )
+
+    res = await _answer(client, session_id, {"q2": "married"})
+
+    assert res.status_code == 200, res.text
+    assert (await _stored(db_conn, session_id))["answers_revision"] == 2
+    assert await _cache_is_sql_null(db_conn, session_id)
 
 
 async def test_questions_are_scored_over_all_candidates_not_top_50(

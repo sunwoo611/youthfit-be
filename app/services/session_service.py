@@ -140,7 +140,11 @@ async def delete_old_sessions(conn: AsyncConnection, retention: timedelta) -> in
 async def answer_session(
     conn: AsyncConnection, session_id: uuid.UUID, request: AnswerRequest
 ) -> SessionResponse:
-    """답은 1차 조건에 다시 반영하므로, 같은 세션에 다시 내면 이전 답을 덮어쓴다."""
+    """답은 1차 조건에 다시 반영하므로, 같은 세션에 다시 내면 이전 답을 덮어쓴다.
+
+    후보가 바뀌므로 선정 사유 캐시를 비우고, 답변 리비전을 올려 진행 중이던 사유 생성이
+    이전 답 기준 결과를 캐시에 쓰지 못하게 한다.
+    """
     session = await _load(conn, session_id)
     questions = _questions(session)
     initial = AppliedConditions.model_validate(session["conditions"])
@@ -152,6 +156,8 @@ async def answer_session(
         .values(
             answers=[answer.model_dump(mode="json") for answer in request.answers],
             final_policy_ids=_policy_ids(candidates),
+            answers_revision=SESSIONS.c.answers_revision + 1,
+            recommendations=None,
         )
     )
     return SessionResponse(

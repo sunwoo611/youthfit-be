@@ -61,4 +61,5 @@ async def answer_session(
     except SessionNotFoundError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, _NOT_FOUND) from exc
     except InvalidAnswerError as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
+        # 422 상수 이름이 Starlette 0.48 에서 바뀌어 버전에 따라 없거나 경고가 나므로 숫자를 쓴다.
+        raise HTTPException(422, str(exc)) from exc

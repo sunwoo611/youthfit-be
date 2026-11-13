@@ -89,7 +89,7 @@ sequenceDiagram
 | `compose.yaml` | 로컬 PostgreSQL 16 |
 | `Dockerfile` | uv 기반 이미지. 기동 시 `alembic upgrade head` 후 uvicorn (`$PORT`) |
 | `render.yaml` | Render Blueprint: 무료 웹 서비스 + PostgreSQL, CI 통과 시 자동 배포 (근거: `decisions/007-dev-deploy-render.md`) |
-| `.github/workflows/ci.yml` | push·PR마다 ruff, Postgres 서비스 컨테이너에 마이그레이션 후 pytest |
+| `.github/workflows/ci.yml` | push·PR마다 ruff, Postgres 서비스 컨테이너에 마이그레이션 후 최신 리비전 downgrade·upgrade 왕복, pytest |
 | `.github/workflows/ingest.yml` | 일 배치 (매일 04:00 KST, 수동 실행 가능), Secrets의 Render DB 외부 URL로 적재. 이어서 오래된 세션 정리(적재 실패와 무관하게 실행) |
 
 ## 배포 (개발 서버)

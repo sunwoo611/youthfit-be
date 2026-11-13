@@ -1,7 +1,13 @@
+from collections.abc import Callable
+from contextlib import AbstractAsyncContextManager
+
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_engine
 
 from app.core.config import Settings
+
+# 호출할 때마다 연결을 열고 블록이 끝나면 닫는 함수. 요청 일부 구간만 연결이 필요할 때 쓴다.
+ConnectionFactory = Callable[[], AbstractAsyncContextManager[AsyncConnection]]
 
 _engine: AsyncEngine | None = None
 

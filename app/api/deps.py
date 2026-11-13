@@ -4,18 +4,23 @@ from typing import Annotated
 
 from fastapi import Depends, HTTPException, status
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.ext.asyncio import AsyncConnection
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from app.core.config import get_settings
-from app.core.database import get_engine
+from app.core.database import ConnectionFactory, get_engine
 from app.ingest.normalize import KST
 from app.llm.client import LlmClient, get_openai_client
 
 
-async def get_db_connection() -> AsyncIterator[AsyncConnection]:
+def _require_engine() -> AsyncEngine:
     engine = get_engine(get_settings())
     if engine is None:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "DATABASE_URL 미설정")
+    return engine
+
+
+async def get_db_connection() -> AsyncIterator[AsyncConnection]:
+    engine = _require_engine()
     try:
         conn = await engine.connect()
     except (OSError, SQLAlchemyError) as exc:
@@ -35,6 +40,14 @@ async def get_db_transaction(
     """
     async with conn.begin():
         yield conn
+
+
+def get_db_connector() -> ConnectionFactory:
+    """호출할 때마다 새 연결로 트랜잭션을 열고 블록이 끝나면 커밋하는 함수.
+
+    LLM 을 기다리는 경로는 요청 내내 연결을 잡지 않도록 이것으로 필요한 구간만 연결한다.
+    """
+    return _require_engine().begin
 
 
 def get_llm_client() -> LlmClient | None:

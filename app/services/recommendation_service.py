@@ -9,8 +9,7 @@ import json
 import logging
 import re
 import uuid
-from collections.abc import Callable, Mapping, Sequence
-from contextlib import AbstractAsyncContextManager
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date
 from typing import Any
@@ -20,6 +19,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncConnection
 
+from app.core.database import ConnectionFactory
 from app.ingest import codes, sigungu
 from app.llm.client import LlmClient, LlmError
 from app.models import Policy, QuestionSession
@@ -52,8 +52,6 @@ MAX_CHECK_POINTS = 3
 POLICY_TEXT_MAX_CHARS = 400
 
 SESSIONS = QuestionSession.__table__
-
-ConnectionFactory = Callable[[], AbstractAsyncContextManager[AsyncConnection]]
 
 INTEREST_LABEL: dict[Interest, str] = {
     Interest.HOUSING: "주거",

@@ -6,13 +6,20 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 import pytest
+from httpx import ASGITransport, AsyncClient
 from pydantic import BaseModel
-from sqlalchemy import func, select, update
+from sqlalchemy import func, select, text, update
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncConnection
 
+from app.api.deps import get_db_connector, get_llm_client
+from app.api.rate_limit import RateLimit
+from app.api.v1.sessions import REASON_LIMIT
+from app.core.config import get_settings
+from app.core.database import ConnectionFactory, dispose_engine
 from app.ingest import codes, sigungu
 from app.llm.client import LlmError, Usage
+from app.main import app
 from app.models import QuestionSession
 from app.schemas.candidates import (
     AppliedConditions,
@@ -340,7 +347,7 @@ async def test_write_reasons_treats_output_without_usable_reasons_as_failure():
 # --- DB 통합 ---
 
 
-def _connect(conn: AsyncConnection) -> svc.ConnectionFactory:
+def _connect(conn: AsyncConnection) -> ConnectionFactory:
     @asynccontextmanager
     async def connect() -> AsyncIterator[AsyncConnection]:
         yield conn
@@ -460,3 +467,117 @@ async def test_recommend_regenerates_when_cache_is_stale_or_broken(db_conn: Asyn
 async def test_recommend_missing_session_raises_not_found(db_conn: AsyncConnection):
     with pytest.raises(SessionNotFoundError):
         await svc.recommend(_connect(db_conn), None, uuid.uuid4())
+
+
+# --- API ---
+
+
+@pytest.fixture
+async def client(db_conn: AsyncConnection) -> AsyncIterator[AsyncClient]:
+    app.dependency_overrides[get_db_connector] = lambda: _connect(db_conn)
+    app.dependency_overrides[REASON_LIMIT] = lambda: None
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            yield c
+    finally:
+        app.dependency_overrides.clear()
+
+
+def _recommend_url(session_id: uuid.UUID | str) -> str:
+    return f"/v1/sessions/{session_id}/recommendations"
+
+
+async def test_api_returns_db_cards_with_reasons_and_reuses_cache(
+    client: AsyncClient, db_conn: AsyncConnection
+):
+    session_id = await _session(db_conn)
+    llm = _llm_for_all()
+    app.dependency_overrides[get_llm_client] = lambda: llm
+
+    res = await client.post(_recommend_url(session_id))
+
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["session_id"] == str(session_id)
+    assert body["as_of"] == TODAY.isoformat()
+    assert len(body["items"]) == svc.RECOMMEND_LIMIT
+    item = body["items"][0]
+    assert item["reason_source"] == "llm"
+    assert item["policy"]["official_url"] == "https://a.go.kr"
+    assert item["reason"] == f"사유 {item['policy']['plcy_no'][2:]}"
+
+    again = await client.post(_recommend_url(session_id))
+    assert again.json() == body
+    assert len(llm.prompts) == 1
+
+
+async def test_api_without_llm_key_answers_with_template(
+    client: AsyncClient, db_conn: AsyncConnection
+):
+    session_id = await _session(db_conn)
+
+    res = await client.post(_recommend_url(session_id))
+
+    assert res.status_code == 200, res.text
+    assert {item["reason_source"] for item in res.json()["items"]} == {"template"}
+
+
+async def test_api_missing_or_expired_session_is_404(client: AsyncClient, db_conn: AsyncConnection):
+    assert (await client.post(_recommend_url(uuid.uuid4()))).status_code == 404
+
+    session_id = await _session(db_conn)
+    await db_conn.execute(
+        update(SESSIONS).where(SESSIONS.c.id == session_id).values(expires_at=func.now())
+    )
+    assert (await client.post(_recommend_url(session_id))).status_code == 404
+
+
+async def test_api_read_failure_is_503_and_logged(caplog: pytest.LogCaptureFixture):
+    @asynccontextmanager
+    async def broken() -> AsyncIterator[AsyncConnection]:
+        raise OSError("connection refused")
+        yield
+
+    app.dependency_overrides[get_db_connector] = lambda: broken
+    app.dependency_overrides[REASON_LIMIT] = lambda: None
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            res = await c.post(_recommend_url(uuid.uuid4()))
+    finally:
+        app.dependency_overrides.clear()
+
+    assert res.status_code == 503
+    assert any(
+        record.exc_info for record in caplog.records if "선정 사유 조회 실패" in record.message
+    )
+
+
+async def test_db_connector_commits_when_block_ends():
+    """서비스는 읽기와 캐시 쓰기를 따로 연 연결에서 하므로 블록이 끝날 때 커밋돼야 캐시가 남는다."""
+    if not get_settings().database_url:
+        pytest.skip("DATABASE_URL 미설정")
+    table = f"connector_probe_{uuid.uuid4().hex[:12]}"
+    connect = get_db_connector()
+    try:
+        try:
+            async with connect() as conn:
+                await conn.execute(text(f"CREATE TABLE {table} (id int)"))
+        except OSError as exc:
+            pytest.skip(f"DB 연결 불가: {type(exc).__name__}")
+        async with connect() as conn:
+            committed = await conn.scalar(text(f"SELECT to_regclass('public.{table}')"))
+            await conn.execute(text(f"DROP TABLE IF EXISTS {table}"))
+    finally:
+        await dispose_engine()
+
+    assert committed is not None
+
+
+async def test_api_is_rate_limited(client: AsyncClient, db_conn: AsyncConnection):
+    session_id = await _session(db_conn)
+    app.dependency_overrides[REASON_LIMIT] = RateLimit(per_ip=1, total=10, window_sec=60)
+
+    assert (await client.post(_recommend_url(session_id))).status_code == 200
+    res = await client.post(_recommend_url(session_id))
+    assert res.status_code == 429
+    assert "Retry-After" in res.headers

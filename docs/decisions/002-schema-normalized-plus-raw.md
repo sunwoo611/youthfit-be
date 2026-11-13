@@ -1,6 +1,6 @@
 # 002. 스키마: 정규화 컬럼 + 원문 raw JSONB 동시 저장
 
-- 상태: Accepted
+- 상태: Superseded by 010 (적금 테이블 3개와 그 키·FK 규칙만. 정규화 컬럼 + raw JSONB 방식은 유효)
 - 날짜: 2026-10-17
 
 ## Context (배경)

@@ -8,11 +8,11 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any, TypeVar
 
-from sqlalchemy import ColumnElement, Table, delete, func, insert, select, tuple_, update
+from sqlalchemy import ColumnElement, Table, delete, func, insert, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
-from app.models import FinancialCompany, IngestRun, Policy, SavingProduct, SavingProductOption
+from app.models import IngestRun, Policy
 
 # asyncpg 의 쿼리당 바인드 파라미터 상한(32767) 아래로 유지한다. 정책은 약 40컬럼.
 BATCH_SIZE = 500
@@ -26,9 +26,6 @@ MAX_PRUNE_RATIO = 0.05
 STALE_RUN_AFTER = timedelta(hours=6)
 
 _policies: Table = Policy.__table__  # type: ignore[assignment]
-_companies: Table = FinancialCompany.__table__  # type: ignore[assignment]
-_products: Table = SavingProduct.__table__  # type: ignore[assignment]
-_options: Table = SavingProductOption.__table__  # type: ignore[assignment]
 _runs: Table = IngestRun.__table__  # type: ignore[assignment]
 
 T = TypeVar("T")
@@ -107,42 +104,6 @@ async def load_policies(
     upserted = await upsert_rows(conn, _policies, rows, ["plcy_no"])
     pruned = await _prune_stale(conn, _policies, [], existing) if prune else None
     return upserted, pruned
-
-
-async def load_companies(conn: AsyncConnection, rows: Sequence[dict[str, Any]]) -> int:
-    return await upsert_rows(conn, _companies, rows, ["fin_co_no"])
-
-
-async def load_saving_products(
-    conn: AsyncConnection,
-    fin_grp_code: str,
-    products: Sequence[dict[str, Any]],
-    options: Sequence[dict[str, Any]],
-    *,
-    prune: bool,
-) -> tuple[int, int, PruneResult | None]:
-    """상품 upsert 후 이번에 받은 상품의 옵션만 교체한다.
-
-    받지 못한 상품의 옵션은 건드리지 않는다.
-    prune 으로 지워지는 상품의 옵션은 FK cascade 로 함께 삭제된다.
-    반환: (상품 upsert 건수, 옵션 insert 건수, 삭제 결과)
-    """
-    scope = [_products.c.fin_grp_code == fin_grp_code]
-    existing = await _count(conn, _products, *scope) if prune else 0
-    upserted = await upsert_rows(conn, _products, products, ["fin_co_no", "fin_prdt_cd"])
-
-    keys = [(p["fin_co_no"], p["fin_prdt_cd"]) for p in products]
-    for chunk in _chunks(keys, BATCH_SIZE):
-        await conn.execute(
-            delete(_options).where(
-                tuple_(_options.c.fin_co_no, _options.c.fin_prdt_cd).in_(list(chunk))
-            )
-        )
-    for chunk in _chunks(options, BATCH_SIZE):
-        await conn.execute(insert(_options), list(chunk))
-
-    pruned = await _prune_stale(conn, _products, scope, existing) if prune else None
-    return upserted, len(options), pruned
 
 
 async def abandon_stale_runs(conn: AsyncConnection, source: str) -> int:

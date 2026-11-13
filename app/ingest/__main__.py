@@ -1,4 +1,7 @@
-"""일 배치 적재 CLI: `uv run python -m app.ingest --source all|ontong|fss`."""
+"""일 배치 적재 CLI: `uv run python -m app.ingest --source all|ontong`.
+
+적재 소스는 온통청년 하나다. `all` 은 기존 호출(워크플로·문서)과의 호환을 위해 남긴다.
+"""
 
 import argparse
 import asyncio
@@ -7,12 +10,11 @@ import sys
 
 from app.core.config import get_settings
 from app.core.database import dispose_engine, get_engine
-from app.ingest.fss import FssClient
 from app.ingest.http import ApiHttpClient
 from app.ingest.ontong import OntongClient
-from app.ingest.pipeline import SourceReport, format_report, run_fss, run_ontong
+from app.ingest.pipeline import format_report, run_ontong
 
-SOURCES = ("all", "ontong", "fss")
+SOURCES = ("all", "ontong")
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -28,28 +30,21 @@ async def main(source: str) -> int:
         print(".env 에 DATABASE_URL 을 설정하세요", file=sys.stderr)
         return 2
 
-    reports: list[SourceReport] = []
     try:
         async with ApiHttpClient() as http:
             try:
-                ontong = OntongClient.from_settings(settings, http) if source != "fss" else None
-                fss = FssClient.from_settings(settings, http) if source != "ontong" else None
+                ontong = OntongClient.from_settings(settings, http)
             except ValueError as exc:
                 print(exc, file=sys.stderr)
                 return 2
-
-            if ontong:
-                reports.append(await run_ontong(engine, ontong))
-            if fss:
-                reports.append(await run_fss(engine, fss))
+            report = await run_ontong(engine, ontong)
             api_calls = http.request_count
     finally:
         await dispose_engine()
 
-    for report in reports:
-        print(format_report(report))
+    print(format_report(report))
     print(f"API 호출 {api_calls}회")
-    return 1 if any(r.status == "failed" for r in reports) else 0
+    return 1 if report.status == "failed" else 0
 
 
 if __name__ == "__main__":

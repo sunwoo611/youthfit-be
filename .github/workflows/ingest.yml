@@ -9,7 +9,7 @@ on:
       source:
         description: 적재 대상
         type: choice
-        options: [all, ontong, fss]
+        options: [all, ontong]
         default: all
 
 concurrency:
@@ -26,7 +26,6 @@ jobs:
     env:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
       ONTONG_YOUTH_API_KEY: ${{ secrets.ONTONG_YOUTH_API_KEY }}
-      FSS_API_KEY: ${{ secrets.FSS_API_KEY }}
       INGEST_SOURCE: ${{ inputs.source || 'all' }}
     steps:
       - uses: actions/checkout@v4

@@ -24,7 +24,6 @@ class Settings(BaseSettings):
 
     # 2차 Build 이후 사용 (공공 API 수집 / LLM)
     ontong_youth_api_key: str | None = None
-    fss_api_key: str | None = None
     openai_api_key: str | None = None
 
     @field_validator("database_url")

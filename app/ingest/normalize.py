@@ -5,7 +5,6 @@
 
 import re
 from datetime import date, datetime, timedelta, timezone
-from decimal import Decimal, InvalidOperation
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -42,10 +41,6 @@ _POLICY_CODE_FIELDS: dict[str, tuple[str, ...]] = {
 }
 _SINGLE_CODE_COLUMNS = frozenset({"marriage_code", "earn_cond_code", "apply_period_code"})
 
-YOUTH_KEYWORDS = ("청년", "사회초년생")
-# 예: "만 19세 이상 ~ 만 34세 이하", "만19~34세"
-_YOUTH_AGE = re.compile(r"(?:1[5-9]|2\d)\s*세?\s*(?:이상)?\s*~\s*(?:만\s*)?(?:29|3\d)\s*세")
-
 
 class NormalizeError(ValueError):
     """필수 필드가 없어 적재할 수 없는 레코드."""
@@ -76,15 +71,6 @@ def parse_int(value: Any) -> int | None:
     try:
         return int(text.replace(",", ""))
     except ValueError:
-        return None
-
-
-def parse_decimal(value: Any) -> Decimal | None:
-    if value is None or isinstance(value, bool):
-        return None
-    try:
-        return Decimal(str(value).strip())
-    except InvalidOperation:
         return None
 
 
@@ -292,69 +278,3 @@ def find_unknown_codes(raw: dict[str, Any]) -> list[tuple[str, str]]:
             values = split_csv(value)
         unknown.extend((column, v) for v in values if v not in table)
     return unknown
-
-
-def is_youth_product(raw: dict[str, Any]) -> bool:
-    """상품명·가입대상·우대조건·기타안내 텍스트에 청년 키워드나 청년 연령대 표기가 있으면 True."""
-    text = " ".join(
-        clean_text(raw.get(k)) or "" for k in ("fin_prdt_nm", "join_member", "spcl_cnd", "etc_note")
-    )
-    return any(k in text for k in YOUTH_KEYWORDS) or bool(_YOUTH_AGE.search(text))
-
-
-def _required(raw: dict[str, Any], *keys: str) -> dict[str, str]:
-    values = {k: clean_text(raw.get(k)) for k in keys}
-    missing = [k for k, v in values.items() if v is None]
-    if missing:
-        raise NormalizeError(f"필수 필드 누락: {', '.join(missing)}")
-    return values  # type: ignore[return-value]
-
-
-def normalize_company(raw: dict[str, Any], fin_grp_code: str) -> dict[str, Any]:
-    req = _required(raw, "fin_co_no", "kor_co_nm")
-    return {
-        "fin_co_no": req["fin_co_no"],
-        "fin_grp_code": fin_grp_code,
-        "name": req["kor_co_nm"],
-        "homepage_url": clean_url(raw.get("homp_url")),
-        "call_center": clean_text(raw.get("cal_tel")),
-        "raw": raw,
-    }
-
-
-def normalize_saving_product(raw: dict[str, Any], fin_grp_code: str) -> dict[str, Any]:
-    req = _required(raw, "fin_co_no", "fin_prdt_cd", "fin_prdt_nm")
-    return {
-        "fin_co_no": req["fin_co_no"],
-        "fin_prdt_cd": req["fin_prdt_cd"],
-        "fin_grp_code": fin_grp_code,
-        "company_name": clean_text(raw.get("kor_co_nm")),
-        "name": req["fin_prdt_nm"],
-        "join_way": clean_text(raw.get("join_way")),
-        "special_condition": clean_text(raw.get("spcl_cnd")),
-        "join_deny": clean_text(raw.get("join_deny")),
-        "join_member": clean_text(raw.get("join_member")),
-        "etc_note": clean_text(raw.get("etc_note")),
-        "max_limit": parse_int(raw.get("max_limit")),
-        "dcls_month": clean_text(raw.get("dcls_month")),
-        "is_youth": is_youth_product(raw),
-        "raw": raw,
-    }
-
-
-def normalize_saving_option(raw: dict[str, Any]) -> dict[str, Any]:
-    req = _required(raw, "fin_co_no", "fin_prdt_cd", "intr_rate_type", "rsrv_type")
-    term_months = parse_int(raw.get("save_trm"))
-    if term_months is None:
-        raise NormalizeError(f"save_trm 누락: {req['fin_prdt_cd']}")
-    return {
-        "fin_co_no": req["fin_co_no"],
-        "fin_prdt_cd": req["fin_prdt_cd"],
-        "rate_type": req["intr_rate_type"],
-        "rate_type_name": clean_text(raw.get("intr_rate_type_nm")),
-        "reserve_type": req["rsrv_type"],
-        "reserve_type_name": clean_text(raw.get("rsrv_type_nm")),
-        "term_months": term_months,
-        "base_rate": parse_decimal(raw.get("intr_rate")),
-        "max_rate": parse_decimal(raw.get("intr_rate2")),
-    }

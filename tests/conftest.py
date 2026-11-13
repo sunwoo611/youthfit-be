@@ -5,18 +5,12 @@ from sqlalchemy import delete, text
 from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine
 
 from app.core.config import get_settings
-from app.models import (
-    FinancialCompany,
-    Policy,
-    QuestionSession,
-    SavingProduct,
-    SavingProductOption,
-)
+from app.models import Policy, QuestionSession
 
 
 @pytest.fixture
 async def db_conn() -> AsyncIterator[AsyncConnection]:
-    """정책·적금·세션 테이블을 비운 트랜잭션. 끝나면 롤백해 적재 데이터를 건드리지 않는다."""
+    """정책·세션 테이블을 비운 트랜잭션. 끝나면 롤백해 적재 데이터를 건드리지 않는다."""
     url = get_settings().database_url
     if not url:
         pytest.skip("DATABASE_URL 미설정")
@@ -31,13 +25,7 @@ async def db_conn() -> AsyncIterator[AsyncConnection]:
         for name in ("policies", "sessions"):
             if await connection.scalar(text(f"SELECT to_regclass('public.{name}')")) is None:
                 pytest.skip("스키마 미적용 (uv run alembic upgrade head)")
-        for table in (
-            SavingProductOption.__table__,
-            SavingProduct.__table__,
-            FinancialCompany.__table__,
-            Policy.__table__,
-            QuestionSession.__table__,
-        ):
+        for table in (Policy.__table__, QuestionSession.__table__):
             await connection.execute(delete(table))
         yield connection
     finally:

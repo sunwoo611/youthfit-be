@@ -1,6 +1,6 @@
-"""일 배치 적재 CLI: `uv run python -m app.ingest --source all|ontong`.
+"""일 배치 적재 CLI: `uv run python -m app.ingest`.
 
-적재 소스는 온통청년 하나다. `all` 은 기존 호출(워크플로·문서)과의 호환을 위해 남긴다.
+적재 소스는 온통청년 하나다. `--source all|ontong` 은 기존 호출과의 호환을 위해 받기만 한다.
 """
 
 import argparse
@@ -19,11 +19,13 @@ SOURCES = ("all", "ontong")
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="python -m app.ingest", description=__doc__)
-    parser.add_argument("--source", choices=SOURCES, default="all")
+    parser.add_argument(
+        "--source", choices=SOURCES, default="all", help="호환용. 어느 값이든 온통청년만 적재한다."
+    )
     return parser.parse_args(argv)
 
 
-async def main(source: str) -> int:
+async def main() -> int:
     settings = get_settings()
     engine = get_engine(settings)
     if engine is None:
@@ -51,4 +53,5 @@ if __name__ == "__main__":
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
     )
-    sys.exit(asyncio.run(main(parse_args().source)))
+    parse_args()
+    sys.exit(asyncio.run(main()))

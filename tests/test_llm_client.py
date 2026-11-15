@@ -197,6 +197,27 @@ async def test_client_passes_base_url():
         await close_openai_client()
 
 
+async def test_client_recreates_when_base_url_or_model_changes():
+    first_settings = Settings(_env_file=None, openai_api_key="test-key", openai_model="gpt-4o-mini")
+    second_settings = Settings(
+        _env_file=None,
+        openai_api_key="test-key",
+        openai_base_url="https://api.baze.co/v1/gateway",
+        openai_model="gpt-5.4-mini",
+    )
+    try:
+        first = get_openai_client(first_settings)
+        second = get_openai_client(second_settings)
+        assert first is not None and second is not None
+        assert second is not first
+        assert str(second._client.base_url).rstrip("/") == "https://api.baze.co/v1/gateway"
+        assert second._model == "gpt-5.4-mini"
+        # 같은 설정이면 다시 재사용한다.
+        assert get_openai_client(second_settings) is second
+    finally:
+        await close_openai_client()
+
+
 def test_tests_never_get_real_llm_client():
     assert get_llm_client() is None
 

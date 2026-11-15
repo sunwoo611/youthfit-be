@@ -118,27 +118,60 @@ def _usage(completion: ChatCompletion, started: float) -> Usage:
 
 
 _client: OpenAIClient | None = None
+# 싱글톤이 붙잡은 설정. 키가 바뀌면 클라이언트를 다시 만든다.
+_client_config: tuple[object, ...] | None = None
+
+
+def _llm_config(settings: Settings) -> tuple[object, ...]:
+    return (
+        settings.openai_api_key,
+        settings.openai_model,
+        settings.openai_base_url or None,
+        settings.llm_timeout_sec,
+        settings.llm_max_retries,
+        settings.llm_max_output_tokens,
+    )
+
+
+def _schedule_close(client: OpenAIClient) -> None:
+    """동기 경로에서 이전 클라이언트를 닫는다. 실행 중 루프가 있으면 태스크로 넘긴다."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    loop.create_task(client.aclose())
 
 
 def get_openai_client(settings: Settings) -> OpenAIClient | None:
-    """OPENAI_API_KEY 가 설정된 경우에만 클라이언트를 지연 생성한다."""
-    global _client
+    """OPENAI_API_KEY 가 설정된 경우에만 클라이언트를 지연 생성한다.
+
+    api_key·model·base_url·타임아웃 등이 바뀌면 이전 싱글톤을 버리고 다시 만든다.
+    (Settings 자체는 get_settings lru_cache 라, 프로세스 env 만 바꾸면 재시작이 필요할 수 있다.)
+    """
+    global _client, _client_config
     if not settings.openai_api_key:
         return None
-    if _client is None:
-        _client = OpenAIClient(
-            api_key=settings.openai_api_key,
-            model=settings.openai_model,
-            timeout_sec=settings.llm_timeout_sec,
-            max_retries=settings.llm_max_retries,
-            max_output_tokens=settings.llm_max_output_tokens,
-            base_url=settings.openai_base_url,
-        )
+    config = _llm_config(settings)
+    if _client is not None and _client_config == config:
+        return _client
+    previous = _client
+    _client = OpenAIClient(
+        api_key=settings.openai_api_key,
+        model=settings.openai_model,
+        timeout_sec=settings.llm_timeout_sec,
+        max_retries=settings.llm_max_retries,
+        max_output_tokens=settings.llm_max_output_tokens,
+        base_url=settings.openai_base_url,
+    )
+    _client_config = config
+    if previous is not None:
+        _schedule_close(previous)
     return _client
 
 
 async def close_openai_client() -> None:
-    global _client
+    global _client, _client_config
     if _client is not None:
         await _client.aclose()
         _client = None
+        _client_config = None

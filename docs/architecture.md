@@ -92,7 +92,7 @@ sequenceDiagram
 | `app/services/question_engine.py` | 역질문 변수 레지스트리와 기대 제거율 점수, 템플릿 질문 생성, 답 반영 (DB·LLM 미사용, 근거: `decisions/008`) |
 | `app/services/session_service.py` | 세션 생성(전체 후보로 질문 선정, INSERT)·조회·답변(선택지 대조, `as_of` 기준 재조회, 덮어쓰기, 선정 사유 캐시 비우기·`answers_revision` 증가) |
 | `app/services/recommendation_service.py` | 최종 후보 상위 5건 선정 사유: 프롬프트 구성, LLM 출력 `plcy_no` 대조·URL/날짜 정리, SQL이 보장하는 자격만 쓰는 템플릿 사유, 세션 캐시(리비전 조건부 저장), 읽기·LLM·쓰기 분리 (근거: `decisions/011`) |
-| `app/llm/client.py` | `LlmClient` 프로토콜과 `OpenAIClient`(Pydantic 구조화 출력, 재시도 포함 전체 시간 한도, 모든 실패를 `LlmError`로 통일, 토큰·지연 로그). 키가 없으면 `None` |
+| `app/llm/client.py` | `LlmClient` 프로토콜과 `OpenAIClient`(Pydantic 구조화 출력, 재시도 포함 전체 시간 한도, 모든 실패를 `LlmError`로 통일, 토큰·지연 로그). `OPENAI_BASE_URL`이 있으면 그 호스트(BAZE 등 OpenAI 호환 게이트웨이). 키가 없으면 `None` |
 | `app/services/query_hints.py` | 자연어 질의에서 지역·취업상태·나이·관심분야 규칙 사전 추출 (LLM 미사용) |
 | `app/core/config.py` | `pydantic-settings` 기반 설정 (CORS 허용 출처, `postgres://`·`sslmode` URL을 asyncpg 형식으로 변환) |
 | `app/core/database.py` | SQLAlchemy async 엔진 (DATABASE_URL 있을 때만 생성). 호출마다 짧은 트랜잭션을 여는 `ConnectionFactory` 타입 (선정 사유 경로의 `get_db_connector`가 사용) |
@@ -149,3 +149,4 @@ flowchart LR
 - 2026-11-03: 세션 30일 보관(일 배치 정리 CLI `app/jobs/cleanup_sessions.py`)과 세션 쓰기 요청 제한(`app/api/rate_limit.py`)
 - 2026-11-13: 적금 제거(`decisions/010`). 금감원 클라이언트·적금 모델 3개·후보 응답 `savings` 삭제, 리비전 `d4a8c2f6b1e9`로 `financial_companies`·`saving_products`·`saving_product_options` 테이블 삭제
 - 2026-11-13: LLM 선정 사유(`decisions/011`). `app/llm/client.py`, `recommendation_service`, `POST /v1/sessions/{id}/recommendations`(IP별 10회·전체 120회/10분), 리비전 `e6c1f4a9d3b7`로 `sessions.recommendations`·`answers_revision` 추가, 앱 INFO 로그 설정(`app/core/logging_config.py`)
+- 2026-11-15: `OPENAI_BASE_URL`로 BAZE 게이트웨이 연결. 대표 사용자 A~D 실측(템플릿 0%, 첫 요청 중앙값 ~3.1s, `journal/2026-11-13-llm-reason.md`)

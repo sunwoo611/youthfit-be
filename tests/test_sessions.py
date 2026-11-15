@@ -2,6 +2,7 @@
 
 import uuid
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import date, timedelta
 from typing import Annotated, Any
 
@@ -12,8 +13,9 @@ from pydantic import ValidationError
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from app.api.deps import get_db_connection, get_db_transaction, get_today
+from app.api.deps import get_db_connection, get_db_connector, get_db_transaction, get_today
 from app.api.v1.sessions import ANSWER_LIMIT, CREATE_LIMIT
+from app.core.database import ConnectionFactory
 from app.ingest import sigungu
 from app.main import app
 from app.models import QuestionSession
@@ -159,6 +161,14 @@ async def test_write_transaction_commit_failure_is_not_reported_as_success():
 # --- DB 통합 ---
 
 
+def _connect(conn: AsyncConnection) -> ConnectionFactory:
+    @asynccontextmanager
+    async def connect() -> AsyncIterator[AsyncConnection]:
+        yield conn
+
+    return connect
+
+
 @pytest.fixture
 async def client(db_conn: AsyncConnection) -> AsyncIterator[AsyncClient]:
     async def _conn() -> AsyncIterator[AsyncConnection]:
@@ -166,6 +176,7 @@ async def client(db_conn: AsyncConnection) -> AsyncIterator[AsyncClient]:
 
     app.dependency_overrides[get_db_connection] = _conn
     app.dependency_overrides[get_db_transaction] = _conn
+    app.dependency_overrides[get_db_connector] = lambda: _connect(db_conn)
     app.dependency_overrides[get_today] = lambda: TODAY
     for limit in (CREATE_LIMIT, ANSWER_LIMIT):
         app.dependency_overrides[limit] = lambda: None

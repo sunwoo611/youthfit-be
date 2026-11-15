@@ -50,11 +50,19 @@ _NOT_FOUND = "세션이 없거나 만료됨"
 )
 async def create_session(
     request: SessionCreateRequest,
-    conn: WriteConn,
+    connect: Annotated[ConnectionFactory, Depends(get_db_connector)],
+    llm: Annotated[LlmClient | None, Depends(get_llm_client)],
     today: Annotated[date, Depends(get_today)],
 ) -> SessionResponse:
-    """1차 후보와 후보를 가르는 역질문(최대 5개)을 만든다. 세션은 24시간 유지된다."""
-    return await session_service.create_session(conn, request, today)
+    """1차 후보와 후보를 가르는 역질문(최대 5개)을 만든다. 세션은 24시간 유지된다.
+
+    질문 변수·선택지는 서버가 고르고, 문구만 LLM 이 다듬는다. 키 없음·실패면 템플릿 문구다.
+    """
+    try:
+        return await session_service.create_session(connect, llm, request, today)
+    except (OSError, SQLAlchemyError) as exc:
+        logger.exception("세션 생성 실패")
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "DB 연결 불가") from exc
 
 
 @router.get("/{session_id}", response_model=SessionResponse)

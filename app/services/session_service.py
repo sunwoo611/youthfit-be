@@ -1,6 +1,7 @@
 """역질문 세션. 1차 후보로 질문을 만들어 저장하고, 답을 조건에 반영해 후보를 다시 고른다.
 
 답은 저장된 질문의 선택지와 대조한 값만 받는다. 재조회 기준일은 세션 생성일(`as_of`)이다.
+생성 시 LLM 문구화는 DB 연결 밖에서 돌리고, 실패하면 템플릿 질문을 저장한다.
 """
 
 import uuid
@@ -11,6 +12,8 @@ from typing import Any
 from sqlalchemy import delete, func, insert, select, update
 from sqlalchemy.ext.asyncio import AsyncConnection
 
+from app.core.database import ConnectionFactory
+from app.llm.client import LlmClient
 from app.models import QuestionSession
 from app.schemas.candidates import AppliedConditions, CandidateResponse
 from app.schemas.sessions import (
@@ -27,6 +30,7 @@ from app.services.candidate_service import (
     search_candidates,
 )
 from app.services.question_engine import apply_answer, select_questions
+from app.services.question_phrasing import phrase_questions
 
 SESSIONS = QuestionSession.__table__
 
@@ -62,26 +66,36 @@ def _policy_ids(candidates: CandidateResponse) -> list[str]:
 
 
 async def create_session(
-    conn: AsyncConnection, request: SessionCreateRequest, today: date
+    connect: ConnectionFactory,
+    llm: LlmClient | None,
+    request: SessionCreateRequest,
+    today: date,
 ) -> SessionResponse:
+    """후보 조회 → (연결 밖) 문구화 → INSERT. LLM 대기 중에는 DB 연결을 잡지 않는다."""
     conditions = resolve_conditions(request)
-    # 일부 시군구 정책은 정렬상 상위 50 밖에 몰리므로 질문은 전체 후보로 고른다.
-    rows = await fetch_policy_rows(conn, conditions, today, limit=None)
-    questions = select_questions(rows, conditions)
-    candidates = build_response(conditions, today, rows)
-    created = (
-        await conn.execute(
-            insert(SESSIONS)
-            .values(
-                as_of=today,
-                query=request.query,
-                conditions=conditions.model_dump(mode="json"),
-                questions=[question.model_dump(mode="json") for question in questions],
-                initial_policy_ids=_policy_ids(candidates),
+    async with connect() as conn:
+        # 일부 시군구 정책은 정렬상 상위 50 밖에 몰리므로 질문은 전체 후보로 고른다.
+        rows = await fetch_policy_rows(conn, conditions, today, limit=None)
+        template_questions = select_questions(rows, conditions)
+        candidates = build_response(conditions, today, rows)
+        policy_ids = _policy_ids(candidates)
+
+    questions = await phrase_questions(llm, request.query, template_questions)
+
+    async with connect() as conn:
+        created = (
+            await conn.execute(
+                insert(SESSIONS)
+                .values(
+                    as_of=today,
+                    query=request.query,
+                    conditions=conditions.model_dump(mode="json"),
+                    questions=[question.model_dump(mode="json") for question in questions],
+                    initial_policy_ids=policy_ids,
+                )
+                .returning(SESSIONS.c.id, SESSIONS.c.expires_at)
             )
-            .returning(SESSIONS.c.id, SESSIONS.c.expires_at)
-        )
-    ).one()
+        ).one()
     return SessionResponse(
         session_id=created.id,
         expires_at=created.expires_at,

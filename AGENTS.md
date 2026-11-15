@@ -37,4 +37,5 @@ uv run ruff check .
 2차 Build 완료: Alembic 스키마, 온통청년 일 배치 적재, 품질 리포트, 1차 룰 필터 `POST /v1/candidates`.
 3차 진행 중: 역질문 세션 LLM 없는 E2E 완료. `/v1/sessions` 생성·조회·답변, `sessions` 테이블, 서버가 기대 제거율로 고른 혼인·학력·소득·시군구 템플릿 질문, 답변 반영 재필터(`docs/decisions/008-question-variable-selection.md`).
 적금 제거 완료(2026-11-13): 금감원 적재·적금 테이블·후보 응답 `savings` 삭제(`docs/decisions/010-policy-only-scope.md`).
-다음: LLM 선정 사유 서술(최종 후보 상위 5건), LLM 질문 문구화(서버가 고른 변수·선택지는 고정).
+LLM 선정 사유 구현 완료(2026-11-13): `app/llm/client.py`(OpenAI 구조화 출력, `LlmError` 통일), `POST /v1/sessions/{id}/recommendations`(최종 후보 상위 5건, DB 카드 + LLM 사유, 실패·키 없음은 템플릿, `sessions.recommendations` 캐시, `docs/decisions/011-llm-recommendation-reason.md`). 테스트는 키 없이 가짜 LLM으로 돈다.
+다음: 대표 사용자 A~D 실측(지연·토큰·비용·템플릿 대체 비율·사실 오류, `docs/journal/2026-11-13-llm-reason.md`), LLM 질문 문구화(서버가 고른 변수·선택지는 고정).

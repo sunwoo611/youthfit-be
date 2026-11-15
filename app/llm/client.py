@@ -42,14 +42,20 @@ class OpenAIClient:
         timeout_sec: float,
         max_retries: int,
         max_output_tokens: int,
+        base_url: str | None = None,
         client: AsyncOpenAI | None = None,
     ) -> None:
         self._model = model
         self._timeout_sec = timeout_sec
         self._max_output_tokens = max_output_tokens
-        self._client = client or AsyncOpenAI(
-            api_key=api_key, timeout=timeout_sec, max_retries=max_retries
-        )
+        kwargs: dict[str, object] = {
+            "api_key": api_key,
+            "timeout": timeout_sec,
+            "max_retries": max_retries,
+        }
+        if base_url:
+            kwargs["base_url"] = base_url
+        self._client = client or AsyncOpenAI(**kwargs)
 
     async def aclose(self) -> None:
         await self._client.close()
@@ -126,6 +132,7 @@ def get_openai_client(settings: Settings) -> OpenAIClient | None:
             timeout_sec=settings.llm_timeout_sec,
             max_retries=settings.llm_max_retries,
             max_output_tokens=settings.llm_max_output_tokens,
+            base_url=settings.openai_base_url,
         )
     return _client
 

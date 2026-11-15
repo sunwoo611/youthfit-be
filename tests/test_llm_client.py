@@ -183,13 +183,31 @@ async def test_client_is_created_once_with_api_key():
         await close_openai_client()
 
 
+async def test_client_passes_base_url():
+    settings = Settings(
+        _env_file=None,
+        openai_api_key="test-key",
+        openai_base_url="https://api.baze.co/v1/gateway",
+    )
+    try:
+        client = get_openai_client(settings)
+        assert client is not None
+        assert str(client._client.base_url).rstrip("/") == "https://api.baze.co/v1/gateway"
+    finally:
+        await close_openai_client()
+
+
 def test_tests_never_get_real_llm_client():
     assert get_llm_client() is None
 
 
-def test_llm_settings_defaults():
+def test_llm_settings_defaults(monkeypatch: pytest.MonkeyPatch):
+    # 셸/프로세스에 OPENAI_* 가 있어도 기본값을 검증할 수 있게 지운다.
+    for name in ("OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_MODEL"):
+        monkeypatch.delenv(name, raising=False)
     settings = Settings(_env_file=None)
     assert settings.openai_model == "gpt-4o-mini"
+    assert settings.openai_base_url is None
     assert settings.llm_timeout_sec == 15
     assert settings.llm_max_retries == 1
     assert settings.llm_max_output_tokens == 2000

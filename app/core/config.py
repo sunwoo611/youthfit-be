@@ -27,6 +27,8 @@ class Settings(BaseSettings):
 
     # 키가 없으면 LLM 을 부르지 않고 템플릿 문구로 응답한다.
     openai_api_key: str | None = None
+    # 비우면 OpenAI 기본 호스트. BAZE 등은 https://api.baze.co/v1/gateway
+    openai_base_url: str | None = None
     openai_model: str = "gpt-4o-mini"
     # 재시도와 재시도 대기를 포함한 호출 1회의 전체 시간 한도.
     llm_timeout_sec: float = Field(default=15.0, gt=0)

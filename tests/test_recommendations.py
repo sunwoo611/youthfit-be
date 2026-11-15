@@ -371,7 +371,9 @@ async def _session(conn: AsyncConnection) -> uuid.UUID:
             for i in range(7)
         ),
     )
-    created = await create_session(conn, SessionCreateRequest(query="서울 25살 취준생"), TODAY)
+    created = await create_session(
+        _connect(conn), None, SessionCreateRequest(query="서울 25살 취준생"), TODAY
+    )
     return created.session_id
 
 
@@ -438,7 +440,9 @@ class EchoLlm(FakeLlm):
 
 async def test_answer_resubmission_makes_recommend_write_new_reasons(db_conn: AsyncConnection):
     await _insert_mixed(db_conn)
-    created = await create_session(db_conn, SessionCreateRequest(query=QUERY), TODAY)
+    created = await create_session(
+        _connect(db_conn), None, SessionCreateRequest(query=QUERY), TODAY
+    )
     session_id = created.session_id
     (marriage,) = [q for q in created.questions if q.variable is QuestionVariable.MARRIAGE]
     llm = EchoLlm()

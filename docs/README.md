@@ -6,6 +6,7 @@ Cursor 규칙(`.cursor/rules/youthfit-docs.mdc`)에 따라 Agent가 작업 후 �
 | 위치 | 용도 | 언제 쓰나 |
 |------|------|-----------|
 | [project-overview.md](project-overview.md) | 서비스 한 페이지 요약 | 목표/범위가 바뀔 때 |
+| [frontend-api.md](frontend-api.md) | FE 연동 계약(화면 흐름·예시·주의사항) | API·UX 계약이 바뀔 때. 스키마 SSOT는 `/docs` |
 | [architecture.md](architecture.md) | 시스템 구조·데이터 흐름 | 구조가 바뀔 때 |
 | [decisions/](decisions/) | ADR: 왜 이 기술/방식을 골랐나 | 기술 선택, 설계 갈림길 |
 | [journal/](journal/) | 트러블슈팅·실험·회고 (날짜별) | 버그 해결, 예상 밖 이슈, 측정 결과 |

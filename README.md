@@ -91,7 +91,7 @@ Invoke-RestMethod -Method Post -Uri http://localhost:8000/v1/candidates -Content
 4. GitHub **Actions → Daily ingest → Run workflow** 로 최초 적재를 합니다. 이후 매일 04:00(KST)에 자동 실행됩니다.
 5. 프론트 도메인이 정해지면 `render.yaml` 의 `CORS_ORIGINS` 값에 쉼표로 추가해 merge 합니다 (예: `http://localhost:3000,https://youthfit.vercel.app`). 대시보드에서 바꾸면 다음 Blueprint 동기화 때 `render.yaml` 값으로 되돌아갑니다. Vercel 프리뷰 주소는 대시보드에서 `CORS_ORIGIN_REGEX` (예: `https://youthfit-fe-[a-z0-9-]+\.vercel\.app`) 로 허용합니다 (`sync: false` 라 덮어쓰지 않음).
 
-프론트에는 Render 가 발급한 서비스 URL 과 `/docs`(Swagger), `/openapi.json` 을 공유합니다.
+프론트에는 Render 가 발급한 서비스 URL 과 `/docs`(Swagger), `/openapi.json`, 연동 가이드 [`docs/frontend-api.md`](docs/frontend-api.md) 를 공유합니다.
 
 - 무료 플랜은 15분 동안 요청이 없으면 슬립하고, 다음 첫 요청이 약 1분 걸립니다.
 - 무료 PostgreSQL 은 생성 후 30일이 지나면 만료되고, 14일 유예 뒤 삭제됩니다. 워크스페이스당 무료 DB 는 하나뿐이라 기존 DB 를 지운 뒤 Blueprint 를 다시 동기화해 새로 만듭니다. 외부 URL 이 바뀌므로 GitHub Secret `DATABASE_URL` 을 갱신하고 적재 워크플로를 다시 실행합니다.

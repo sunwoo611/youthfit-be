@@ -9,7 +9,7 @@
 
 1. 일 1회 배치로 온통청년 API → PostgreSQL 미러링 (요청 시 외부 호출 없음)
 2. 자연어 → 1차 키워드 → SQL 룰 필터로 정책 후보군(30~50)
-3. 후보를 가르는 자격 변수 → LLM이 역질문 JSON 생성
+3. 후보를 가르는 자격 변수(서버) → 역질문 JSON; `text`만 LLM 문구화(실패 시 템플릿)
 4. 답변으로 후보 확정 → LLM이 DB 메타데이터 기반 선정 사유 서술, URL은 DB 값만 사용
 
 자세한 내용: `docs/architecture.md`, `docs/decisions/`.
@@ -35,7 +35,7 @@ uv run ruff check .
 ## 현재 상태
 
 2차 Build 완료: Alembic 스키마, 온통청년 일 배치 적재, 품질 리포트, 1차 룰 필터 `POST /v1/candidates`.
-3차 진행 중: 역질문 세션 LLM 없는 E2E 완료. `/v1/sessions` 생성·조회·답변, `sessions` 테이블, 서버가 기대 제거율로 고른 혼인·학력·소득·시군구 템플릿 질문, 답변 반영 재필터(`docs/decisions/008-question-variable-selection.md`).
-적금 제거 완료(2026-11-13): 금감원 적재·적금 테이블·후보 응답 `savings` 삭제(`docs/decisions/010-policy-only-scope.md`).
-LLM 선정 사유 구현·실측 완료(2026-11-13~15): `app/llm/client.py`(OpenAI 호환·`OPENAI_BASE_URL`로 BAZE 가능, `LlmError` 통일), `POST /v1/sessions/{id}/recommendations`(상위 5건, DB 카드 + LLM 사유, 템플릿 대체, 세션 캐시, `docs/decisions/011-llm-recommendation-reason.md`). A~D 실측: BAZE `gpt-5.4-mini`, 템플릿 0%, 첫 요청 중앙값 ~3.1s·캐시 ~60ms(`docs/journal/2026-11-13-llm-reason.md`). 테스트는 키 없이 가짜 LLM으로 돈다.
-다음: LLM 질문 문구화(서버가 고른 변수·선택지는 고정), 프롬프트 경량화(8주차).
+3차 완료: 역질문 세션(`/v1/sessions`, 기대 제거율 변수·템플릿 질문·답변 재필터, `docs/decisions/008-question-variable-selection.md`), LLM 질문 문구화(`app/services/question_phrasing.py`, 세션 생성 시 `text`만·템플릿 폴백, `docs/decisions/012-llm-question-phrasing.md`), LLM 선정 사유(`POST /v1/sessions/{id}/recommendations`, `docs/decisions/011-llm-recommendation-reason.md`, A~D 실측 `docs/journal/2026-11-13-llm-reason.md`).
+적금 제거 완료(2026-11-13): `docs/decisions/010-policy-only-scope.md`.
+테스트는 키 없이 가짜 LLM으로 돈다.
+다음: 프롬프트 경량화(8주차), FE 연동(9주차).

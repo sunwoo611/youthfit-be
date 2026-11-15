@@ -1,6 +1,6 @@
 # 아키텍처
 
-> 현재 구현 상태: 스키마, 일 배치 적재, 필드 채움률 리포트, 1차 룰 필터 API(`POST /v1/candidates`), 역질문 세션 API(`/v1/sessions`, 템플릿 질문·답변 반영 재필터), 최종 후보 LLM 선정 사유(`POST /v1/sessions/{id}/recommendations`, 템플릿 대체·세션 캐시, 근거: `decisions/011`)까지. 추천 대상은 청년 정책만이다(적금 제외, 근거: `decisions/010`). LLM 질문 문구화는 다음 단계.
+> 현재 구현 상태: 스키마, 일 배치 적재, 필드 채움률 리포트, 1차 룰 필터 API(`POST /v1/candidates`), 역질문 세션 API(`/v1/sessions`, 서버 선정 변수·선택지 + LLM 질문 문구화·템플릿 폴백, 답변 반영 재필터, 근거: `decisions/008`, `012`), 최종 후보 LLM 선정 사유(`POST /v1/sessions/{id}/recommendations`, 템플릿 대체·세션 캐시, 근거: `decisions/011`)까지. 추천 대상은 청년 정책만이다(적금 제외, 근거: `decisions/010`).
 
 ## 처리 흐름
 
@@ -36,7 +36,7 @@ flowchart LR
 
 1. 자연어 입력 → 지역·취업상태·관심분야 1차 키워드 추출
 2. 로컬 DB에서 정책 후보군 선별 (30 ~ 50)
-3. 후보군을 가르는 핵심 자격 변수 식별(서버가 기대 제거율로 선정) → 3~5개 역질문(JSON). 지금은 템플릿 문구, LLM은 문구만 다듬을 예정 (근거: `decisions/008`)
+3. 후보군을 가르는 핵심 자격 변수 식별(서버가 기대 제거율로 선정) → 3~5개 역질문(JSON). 변수·선택지는 서버 고정, `text`만 LLM이 다듬고 실패·키 없음이면 템플릿 유지 (근거: `decisions/008`, `012`)
 4. 답변으로 최종 후보 확정 → 상위 5건에 LLM이 DB 메타데이터 기반 선정 사유 서술. 공식 URL·마감일·자격 표시는 DB 카드로만 만들고, LLM 실패·키 없음이면 템플릿 사유 (근거: `decisions/011`)
 
 ### 역질문 세션 흐름
@@ -46,15 +46,22 @@ sequenceDiagram
   participant FE as Frontend
   participant API as SessionsAPI
   participant QE as QuestionEngine
+  participant LLM as LlmClient
   participant PG as PostgreSQL
   FE->>API: "POST /v1/sessions (query, 선택 필드)"
   API->>PG: "1차 조건으로 전체 후보 조회"
   API->>QE: "후보 행 + 이미 아는 조건"
-  QE-->>API: "기대 제거율 상위 최대 5개 질문"
-  API->>PG: "sessions INSERT (조건, 질문, as_of)"
+  QE-->>API: "기대 제거율 상위 최대 5개 템플릿 질문"
+  API->>LLM: "text만 문구화 (연결 없이)"
+  alt ok
+    LLM-->>API: "id별 phrased text"
+  else fail or no key
+    LLM-->>API: "템플릿 text 유지"
+  end
+  API->>PG: "sessions INSERT (조건, 최종 질문, as_of)"
   API-->>FE: "session_id, questions, 1차 후보(상위 50)"
   FE->>API: "POST /v1/sessions/{id}/answers"
-  API->>API: "저장된 질문 선택지와 대조"
+  API->>API: "저장된 질문 선택지 value와 대조"
   API->>PG: "확장 조건으로 재조회(as_of 기준), UPDATE"
   API-->>FE: "좁혀진 후보"
 ```
@@ -90,7 +97,8 @@ sequenceDiagram
 | `app/schemas/sessions.py` | 세션 요청·응답, 질문(`variable`, 선택지 `value`/`label`, `affected`)·답 모델, 선정 사유 응답(`Recommendation`: DB 카드 + `reason`·`check_points`·`reason_source`)과 캐시 항목(`CachedReason`) |
 | `app/services/candidate_service.py` | 1차 룰 필터 SQL: 마감 제외·나이·시도·취업상태·관심분야 + 역질문 답(혼인·학력·소득·시군구), 정렬(상태 > 시도 전체·전국·일부 시군구 > 마감 임박, 시군구를 알면 내 시군구 정책은 시도 전체와 같은 순위), 정책명 정규화 중복 제거, 공식 링크 선택. 행 조회(`fetch_policy_rows`, limit 없음 허용)와 응답 조립(`build_response`) 분리 (근거: `decisions/005`, `006`, `008`) |
 | `app/services/question_engine.py` | 역질문 변수 레지스트리와 기대 제거율 점수, 템플릿 질문 생성, 답 반영 (DB·LLM 미사용, 근거: `decisions/008`) |
-| `app/services/session_service.py` | 세션 생성(전체 후보로 질문 선정, INSERT)·조회·답변(선택지 대조, `as_of` 기준 재조회, 덮어쓰기, 선정 사유 캐시 비우기·`answers_revision` 증가) |
+| `app/services/question_phrasing.py` | 세션 생성 시 질문 `text`만 LLM 문구화. id 대조·URL/날짜 정리·템플릿 폴백. 후보·선택지는 프롬프트에 넣지 않음 (근거: `decisions/012`) |
+| `app/services/session_service.py` | 세션 생성(전체 후보로 질문 선정 → 연결 밖 문구화 → INSERT)·조회·답변(선택지 대조, `as_of` 기준 재조회, 덮어쓰기, 선정 사유 캐시 비우기·`answers_revision` 증가) |
 | `app/services/recommendation_service.py` | 최종 후보 상위 5건 선정 사유: 프롬프트 구성, LLM 출력 `plcy_no` 대조·URL/날짜 정리, SQL이 보장하는 자격만 쓰는 템플릿 사유, 세션 캐시(리비전 조건부 저장), 읽기·LLM·쓰기 분리 (근거: `decisions/011`) |
 | `app/llm/client.py` | `LlmClient` 프로토콜과 `OpenAIClient`(Pydantic 구조화 출력, 재시도 포함 전체 시간 한도, 모든 실패를 `LlmError`로 통일, 토큰·지연 로그). `OPENAI_BASE_URL`이 있으면 그 호스트(BAZE 등 OpenAI 호환 게이트웨이). 키가 없으면 `None` |
 | `app/services/query_hints.py` | 자연어 질의에서 지역·취업상태·나이·관심분야 규칙 사전 추출 (LLM 미사용) |
@@ -150,3 +158,4 @@ flowchart LR
 - 2026-11-13: 적금 제거(`decisions/010`). 금감원 클라이언트·적금 모델 3개·후보 응답 `savings` 삭제, 리비전 `d4a8c2f6b1e9`로 `financial_companies`·`saving_products`·`saving_product_options` 테이블 삭제
 - 2026-11-13: LLM 선정 사유(`decisions/011`). `app/llm/client.py`, `recommendation_service`, `POST /v1/sessions/{id}/recommendations`(IP별 10회·전체 120회/10분), 리비전 `e6c1f4a9d3b7`로 `sessions.recommendations`·`answers_revision` 추가, 앱 INFO 로그 설정(`app/core/logging_config.py`)
 - 2026-11-15: `OPENAI_BASE_URL`로 BAZE 게이트웨이 연결. 대표 사용자 A~D 실측(템플릿 0%, 첫 요청 중앙값 ~3.1s, `journal/2026-11-13-llm-reason.md`)
+- 2026-11-16: 역질문 LLM 문구화(`decisions/012`). `question_phrasing`, 세션 생성 시 연결 밖 `text` 다듬기·템플릿 폴백, 변수·선택지는 서버 고정

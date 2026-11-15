@@ -10,7 +10,7 @@
 | 4 | 10/13~10/19 | 역질문 프롬프트 1차, 정보 이득 기반 질문 3~5개 도출 | [~] 기대 제거율 기반 변수 선정·템플릿 질문(`decisions/008-question-variable-selection.md`). LLM 문구화 남음 |
 | 5 | 10/20~10/26 | 역질문 JSON 스키마, 세션 상태 관리 | [x] `/v1/sessions` 생성·조회·답변, `sessions` 테이블, 대표 사용자 점검(`journal/2026-11-02-question-engine.md`) |
 | 6 | 10/27~11/2 | 역질문-답변 추론 엔진, RAG 근거 매칭, 중간보고 | [ ] |
-| 7 | 11/3~11/9 | ~~통합 패키지(지원금+적금) 매칭 로직~~ → 정책 심화: 적금 제외, 최종 후보 LLM 선정 사유 (`decisions/010-policy-only-scope.md`) | [~] 적금 제거 완료. LLM 선정 사유 남음 |
+| 7 | 11/3~11/9 | ~~통합 패키지(지원금+적금) 매칭 로직~~ → 정책 심화: 적금 제외(`decisions/010-policy-only-scope.md`), 최종 후보 LLM 선정 사유(`decisions/011-llm-recommendation-reason.md`) | [x] 적금 제거·선정 사유 API·A~D 실측(`journal/2026-11-13-llm-reason.md`) |
 | 8 | 11/10~11/16 | 캐싱 계층, 프롬프트 경량화·비용 최적화 | [ ] |
 | 9 | 11/17~11/23 | FE-BE 통합, 클라우드 테스트 배포 | [~] 개발 서버 구성 선행(Render + Actions, `decisions/007-dev-deploy-render.md`) |
 | 10 | 11/24~11/30 | 알파 테스트(10~15명), 피드백 분석 | [ ] |

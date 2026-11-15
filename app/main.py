@@ -7,16 +7,20 @@ from app.api import health
 from app.api.v1 import candidates, sessions
 from app.core.config import Settings, get_settings
 from app.core.database import dispose_engine
+from app.core.logging_config import configure_logging
+from app.llm.client import close_openai_client
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     yield
     await dispose_engine()
+    await close_openai_client()
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
+    configure_logging()
     app = FastAPI(title=settings.app_name, version="0.1.0", lifespan=lifespan)
     app.add_middleware(
         CORSMiddleware,

@@ -2,7 +2,7 @@ import uuid
 from datetime import date, datetime
 from typing import Any
 
-from sqlalchemy import Date, DateTime, Index, Text, func, text
+from sqlalchemy import Date, DateTime, Index, Integer, Text, func, text
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -40,5 +40,10 @@ class QuestionSession(Base):
     final_policy_ids: Mapped[list[str]] = mapped_column(
         ARRAY(Text), nullable=False, server_default="{}"
     )
+    # 답을 낼 때마다 1 올린다. 선정 사유는 읽은 시점의 값과 같을 때만 캐시에 쓴다.
+    answers_revision: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    # 선정 사유 캐시. 서술(사유·확인할 조건)만 담고 정책 카드는 매번 DB 값으로 만든다.
+    # 답을 다시 내면 후보가 바뀌므로 비운다. None 은 JSON null 이 아닌 SQL NULL 로 쓴다.
+    recommendations: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB(none_as_null=True))
 
     __table_args__ = (Index("ix_sessions_expires_at", "expires_at"),)

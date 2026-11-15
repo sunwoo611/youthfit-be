@@ -24,7 +24,16 @@ class Settings(BaseSettings):
 
     # 2차 Build 이후 사용 (공공 API 수집 / LLM)
     ontong_youth_api_key: str | None = None
+
+    # 키가 없으면 LLM 을 부르지 않고 템플릿 문구로 응답한다.
     openai_api_key: str | None = None
+    # 비우면 OpenAI 기본 호스트. BAZE 등은 https://api.baze.co/v1/gateway
+    openai_base_url: str | None = None
+    openai_model: str = "gpt-4o-mini"
+    # 재시도와 재시도 대기를 포함한 호출 1회의 전체 시간 한도.
+    llm_timeout_sec: float = Field(default=15.0, gt=0)
+    llm_max_retries: int = Field(default=1, ge=0)
+    llm_max_output_tokens: int = Field(default=2000, gt=0)
 
     @field_validator("database_url")
     @classmethod

@@ -13,7 +13,7 @@ YouthFit 백엔드와 Next.js 프론트를 붙일 때 쓰는 계약서입니다.
 | Content-Type | `application/json` |
 | 추천 범위 | **청년 정책만** (적금 API 없음) |
 
-CORS 기본 허용: `http://localhost:3000`. 배포 도메인·Vercel 프리뷰는 백엔드 `CORS_ORIGINS` / `CORS_ORIGIN_REGEX`에 추가가 필요합니다.
+CORS 허용: `http://localhost:3000`, `https://chung-fit.vercel.app`. Vercel 프리뷰 등 추가 출처는 백엔드 `CORS_ORIGINS` / `CORS_ORIGIN_REGEX`에 등록이 필요합니다.
 
 Render 무료 플랜은 약 15분 무요청 후 슬립하며, 깨어날 때 첫 요청이 최대 약 1분 걸릴 수 있습니다. UX에 “잠시만 기다려 주세요”를 두는 것을 권장합니다.
 

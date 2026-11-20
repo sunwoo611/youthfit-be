@@ -37,5 +37,6 @@ uv run ruff check .
 2차 Build 완료: Alembic 스키마, 온통청년 일 배치 적재, 품질 리포트, 1차 룰 필터 `POST /v1/candidates`.
 3차 완료: 역질문 세션(`/v1/sessions`, 기대 제거율 변수·템플릿 질문·답변 재필터, `docs/decisions/008-question-variable-selection.md`), LLM 질문 문구화(`app/services/question_phrasing.py`, 세션 생성 시 `text`만·템플릿 폴백, `docs/decisions/012-llm-question-phrasing.md`), LLM 선정 사유(`POST /v1/sessions/{id}/recommendations`, `docs/decisions/011-llm-recommendation-reason.md`, A~D 실측 `docs/journal/2026-11-13-llm-reason.md`).
 적금 제거 완료(2026-11-13): `docs/decisions/010-policy-only-scope.md`.
+가짜 전국 필터·시도 고정 역질문(2026-11-20): `docs/decisions/013-fake-national-and-sido-question.md`.
 테스트는 키 없이 가짜 LLM으로 돈다.
 다음: 프롬프트 경량화(8주차), FE 연동(9주차).

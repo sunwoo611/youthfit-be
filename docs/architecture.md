@@ -1,6 +1,6 @@
 # 아키텍처
 
-> 현재 구현 상태: 스키마, 일 배치 적재, 필드 채움률 리포트, 1차 룰 필터 API(`POST /v1/candidates`), 역질문 세션 API(`/v1/sessions`, 서버 선정 변수·선택지 + LLM 질문 문구화·템플릿 폴백, 답변 반영 재필터, 근거: `decisions/008`, `012`), 최종 후보 LLM 선정 사유(`POST /v1/sessions/{id}/recommendations`, 템플릿 대체·세션 캐시, 근거: `decisions/011`)까지. 추천 대상은 청년 정책만이다(적금 제외, 근거: `decisions/010`).
+> 현재 구현 상태: 스키마, 일 배치 적재, 필드 채움률 리포트, 1차 룰 필터 API(`POST /v1/candidates`, 가짜 전국 제외·`region_scope`, 근거: `decisions/013`), 역질문 세션 API(`/v1/sessions`, 서버 선정 변수·선택지 + 시도 미입력 시 `sido` 칩 고정 + LLM 질문 문구화·템플릿 폴백, 답변 반영 재필터, 근거: `decisions/008`, `012`, `013`), 최종 후보 LLM 선정 사유(`POST /v1/sessions/{id}/recommendations`, 템플릿 대체·세션 캐시, 근거: `decisions/011`)까지. 추천 대상은 청년 정책만이다(적금 제외, 근거: `decisions/010`).
 
 ## 처리 흐름
 
@@ -35,8 +35,8 @@ flowchart LR
 ## 4단계 파이프라인
 
 1. 자연어 입력 → 지역·취업상태·관심분야 1차 키워드 추출
-2. 로컬 DB에서 정책 후보군 선별 (30 ~ 50)
-3. 후보군을 가르는 핵심 자격 변수 식별(서버가 기대 제거율로 선정) → 3~5개 역질문(JSON). 변수·선택지는 서버 고정, `text`만 LLM이 다듬고 실패·키 없음이면 템플릿 유지 (근거: `decisions/008`, `012`)
+2. 로컬 DB에서 정책 후보군 선별 (30 ~ 50). 시도 없으면 유효 전국만, 가짜 전국(기초지자체+전국 zip)은 제외 (근거: `decisions/013`)
+3. 후보군을 가르는 핵심 자격 변수 식별(서버가 기대 제거율로 선정) → 3~5개 역질문(JSON). 시도 미입력이면 `sido`를 맨 앞 고정. 변수·선택지는 서버 고정, `text`만 LLM이 다듬고 실패·키 없음이면 템플릿 유지 (근거: `decisions/008`, `012`, `013`)
 4. 답변으로 최종 후보 확정 → 상위 5건에 LLM이 DB 메타데이터 기반 선정 사유 서술. 공식 URL·마감일·자격 표시는 DB 카드로만 만들고, LLM 실패·키 없음이면 템플릿 사유 (근거: `decisions/011`)
 
 ### 역질문 세션 흐름
@@ -160,4 +160,4 @@ flowchart LR
 - 2026-11-13: LLM 선정 사유(`decisions/011`). `app/llm/client.py`, `recommendation_service`, `POST /v1/sessions/{id}/recommendations`(IP별 10회·전체 120회/10분), 리비전 `e6c1f4a9d3b7`로 `sessions.recommendations`·`answers_revision` 추가, 앱 INFO 로그 설정(`app/core/logging_config.py`)
 - 2026-11-15: `OPENAI_BASE_URL`로 BAZE 게이트웨이 연결. 대표 사용자 A~D 실측(템플릿 0%, 첫 요청 중앙값 ~3.1s, `journal/2026-11-13-llm-reason.md`)
 - 2026-11-16: 역질문 LLM 문구화(`decisions/012`). `question_phrasing`, 세션 생성 시 연결 밖 `text` 다듬기·템플릿 폴백, 변수·선택지는 서버 고정
-- 2026-11-20: 가짜 전국 필터·시도 고정 역질문(`decisions/013`). 기초지자체+전국 zip은 유효 전국에서 제외, 해당 시도만 `region_scope=sigungu`로 통과 (`region_scope.py`). 시도 없으면 세션 생성 시 `sido` 칩을 맨 앞 고정
+- 2026-11-20: 가짜 전국 필터·시도 고정 역질문(`decisions/013`, `journal/2026-11-20-fake-national-sido-question.md`). 기초지자체+전국 zip은 유효 전국에서 제외, 해당 시도만 `region_scope=sigungu`로 통과 (`region_scope.py`). 시도 없으면 세션 생성 시 `sido` 칩을 맨 앞 고정. 로컬 DB: 전국 zip 694건 중 가짜 전국 19건 제외

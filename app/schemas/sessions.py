@@ -11,6 +11,7 @@ from app.schemas.candidates import CandidateRequest, CandidateResponse, PolicyCa
 
 
 class QuestionVariable(StrEnum):
+    SIDO = "sido"
     MARRIAGE = "marriage"
     SCHOOL = "school"
     INCOME_BUCKET = "income_bucket"
@@ -28,7 +29,12 @@ class Question(BaseModel):
     text: str
     type: Literal["single", "multi"]
     options: list[QuestionOption]
-    affected: int = Field(description="답에 따라 남거나 빠지는 후보 수")
+    affected: int = Field(
+        description=(
+            "기대 제거율로 고른 변수에서, 답에 따라 빠질 수 있는 후보 수. "
+            "sido 는 제거율 점수 없이 고정 삽입하므로 항상 0(답 후 후보가 늘 수 있음)."
+        )
+    )
 
 
 class SessionCreateRequest(CandidateRequest):

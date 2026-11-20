@@ -18,6 +18,8 @@ from app.services.candidate_service import (
 )
 from app.services.question_engine import (
     REGISTRY,
+    SIDO_VARIABLE,
+    VARIABLES,
     apply_answer,
     removal_score,
     select_questions,
@@ -151,6 +153,29 @@ def test_selects_unknown_variables_by_score():
     }
 
 
+def test_sido_is_fixed_first_when_unknown():
+    """시도 미입력이면 점수와 무관하게 시도 질문이 맨 앞이고, 시군구는 붙지 않는다."""
+    questions = select_questions(_mixed_rows(), _conditions(sido_code=None))
+    assert [(q.id, q.variable, q.affected) for q in questions] == [
+        ("q1", QuestionVariable.SIDO, 0),
+        ("q2", QuestionVariable.SCHOOL, 30),
+        ("q3", QuestionVariable.MARRIAGE, 8),
+        ("q4", QuestionVariable.INCOME_BUCKET, 5),
+    ]
+    assert questions[0].text == "어느 시도에 사시나요?"
+    assert questions[0].options == SIDO_VARIABLE.options(_conditions(sido_code=None))
+    assert {opt.value for opt in questions[0].options} == set(codes.SIDO)
+    assert QuestionVariable.SIGUNGU not in [q.variable for q in questions]
+
+
+def test_sido_fixed_question_counts_toward_max(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(question_engine, "MAX_QUESTIONS", 2)
+    assert _variables(_mixed_rows(), _conditions(sido_code=None)) == [
+        QuestionVariable.SIDO,
+        QuestionVariable.SCHOOL,
+    ]
+
+
 def test_known_variables_are_not_asked():
     conditions = _conditions(
         school=School.COLLEGE_ENROLLED,
@@ -245,6 +270,7 @@ def test_apply_answer_sets_condition_fields():
         "41117",
     ]
     assert base.sigungu_codes == []
+    assert apply_answer(_conditions(sido_code=None), QuestionVariable.SIDO, "11").sido_code == "11"
 
 
 @pytest.mark.parametrize(
@@ -255,6 +281,7 @@ def test_apply_answer_sets_condition_fields():
         (QuestionVariable.INCOME_BUCKET, "up_to_1000"),
         (QuestionVariable.SIGUNGU, "41111"),
         (QuestionVariable.SIGUNGU, "11110"),
+        (QuestionVariable.SIDO, "99"),
     ],
 )
 def test_apply_answer_rejects_values_outside_options(variable: QuestionVariable, value: str):
@@ -354,9 +381,10 @@ async def _sql_plcy_nos(db_conn: AsyncConnection, conditions: AppliedConditions)
 
 @pytest.mark.parametrize("sido_code", ["11", "41"])
 async def test_python_keeps_matches_sql_filters(db_conn: AsyncConnection, sido_code: str):
+    # 시도는 고정 삽입·SQL 필터 교체용이라 행 단위 keeps 동등성 대상이 아니다.
     candidates = await _equivalence_candidates(db_conn, sido_code)
     base = _conditions(sido_code)
-    for variable in REGISTRY.values():
+    for variable in VARIABLES:
         for option in variable.options(base):
             sql = await _sql_plcy_nos(db_conn, apply_answer(base, variable.name, option.value))
             python = {row["plcy_no"] for row in candidates if variable.keeps(row, option.value)}
@@ -366,7 +394,7 @@ async def test_python_keeps_matches_sql_filters(db_conn: AsyncConnection, sido_c
 async def test_combined_answers_match_all_python_keeps(db_conn: AsyncConnection):
     candidates = await _equivalence_candidates(db_conn, "41")
     base = _conditions("41")
-    options = {name: variable.options(base) for name, variable in REGISTRY.items()}
+    options = {variable.name: variable.options(base) for variable in VARIABLES}
     fixed = (QuestionVariable.MARRIAGE, QuestionVariable.SCHOOL, QuestionVariable.INCOME_BUCKET)
     sigungu_options = options[QuestionVariable.SIGUNGU]
     combos = itertools.product(*(options[name] for name in fixed))

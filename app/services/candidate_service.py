@@ -210,6 +210,8 @@ def region_rank_expr(sido_code: str | None) -> ColumnElement[int]:
     )
     return case(
         (effective_national_expr(), REGION_NATIONAL),
+        # 가짜 전국은 zip이 시도 시군구를 대부분 포함해도 시도 전체가 아니다.
+        (fake_national_expr(), REGION_SIGUNGU),
         (in_sido >= func.coalesce(sido_total, 0) * SIDO_WIDE_MIN_RATIO, REGION_SIDO),
         else_=REGION_SIGUNGU,
     )

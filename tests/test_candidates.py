@@ -34,6 +34,12 @@ from app.services.candidate_service import (
     search_candidates,
 )
 from app.services.policy_status import Availability, policy_availability
+from app.services.region_scope import (
+    is_basic_local_org,
+    is_effective_national,
+    is_fake_national,
+    is_national_zip,
+)
 
 TODAY = date(2026, 10, 26)
 PAST = date(2026, 10, 25)
@@ -102,6 +108,33 @@ def test_question_conditions_default_to_unknown():
     conditions = resolve_conditions(CandidateRequest(query="서울 사는 25살 취준생"))
     assert conditions.sigungu_codes == []
     assert (conditions.marriage, conditions.school, conditions.income_bucket) == (None,) * 3
+
+
+@pytest.mark.parametrize(
+    ("org_name", "expected"),
+    [
+        ("경상북도 의성군 관광복지과", True),
+        ("의성군청", True),
+        ("서울특별시 강남구청", True),
+        ("수원시청 청년정책과", True),
+        ("경기도청", False),
+        ("고용노동부", False),
+        ("테스트기관", False),
+        (None, False),
+        ("", False),
+    ],
+)
+def test_is_basic_local_org(org_name: str | None, expected: bool):
+    assert is_basic_local_org(org_name) is expected
+
+
+def test_national_zip_and_effective_national_helpers():
+    assert is_national_zip(NATIONAL)
+    assert not is_national_zip(NATIONAL[:-1])
+    assert is_effective_national(NATIONAL, "고용노동부")
+    assert not is_effective_national(NATIONAL, "경상북도 의성군 관광복지과")
+    assert is_fake_national(NATIONAL, "경상북도 의성군 관광복지과")
+    assert not is_fake_national(NATIONAL, "경기도청")
 
 
 @pytest.mark.parametrize(
@@ -354,6 +387,57 @@ async def test_without_region_only_national_policies(db_conn: AsyncConnection):
         _policy("NATIONAL", sido_codes=["11", "41"], sigungu_codes=NATIONAL),
     )
     assert await _policy_nos(db_conn, CandidateRequest()) == ["NATIONAL"]
+
+
+def _fake_national_uiseong(**overrides: object) -> dict:
+    return _policy(
+        "FAKE-UISEONG",
+        name="의성군 청년 주거 지원",
+        org_name="경상북도 의성군 관광복지과",
+        sido_codes=["11", "41", "47"],
+        sigungu_codes=NATIONAL,
+        categories=["주거"],
+        subcategories=["주택 및 거주지"],
+        **overrides,
+    )
+
+
+async def test_fake_national_excluded_without_sido_and_other_sido(
+    db_conn: AsyncConnection,
+):
+    await _insert_policies(
+        db_conn,
+        _fake_national_uiseong(),
+        _policy(
+            "TRUE-NATIONAL",
+            sido_codes=["11", "41", "47"],
+            sigungu_codes=NATIONAL,
+            org_name="고용노동부",
+        ),
+        _policy(
+            "METRO-ZIP",
+            sido_codes=["11", "41", "47"],
+            sigungu_codes=NATIONAL,
+            org_name="경기도청",
+        ),
+    )
+    assert set(await _policy_nos(db_conn, CandidateRequest())) == {
+        "TRUE-NATIONAL",
+        "METRO-ZIP",
+    }
+    assert "FAKE-UISEONG" not in await _policy_nos(
+        db_conn, CandidateRequest(sido_code="11")
+    )
+
+
+async def test_fake_national_kept_for_matching_sido_as_sigungu(
+    db_conn: AsyncConnection,
+):
+    await _insert_policies(db_conn, _fake_national_uiseong())
+    result = await find_candidates(db_conn, CandidateRequest(sido_code="47"), TODAY)
+    assert [item.plcy_no for item in result.policies.items] == ["FAKE-UISEONG"]
+    assert result.policies.items[0].eligibility.region_scope == "sigungu"
+    assert result.policies.items[0].eligibility.sigungu_codes == NATIONAL
 
 
 async def test_finance_interest_requires_finance_subcategory(db_conn: AsyncConnection):

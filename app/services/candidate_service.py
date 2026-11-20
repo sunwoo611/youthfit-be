@@ -40,6 +40,11 @@ from app.schemas.candidates import (
 )
 from app.services.policy_status import Availability
 from app.services.query_hints import extract_hints
+from app.services.region_scope import (
+    effective_national_expr,
+    fake_national_expr,
+    org_matches_sido_expr,
+)
 
 POLICY_LIMIT = 50
 ONTONG_DETAIL_URL = "https://www.youthcenter.go.kr/youthPolicy/ythPlcyTotalSearch/ythPlcyDetail/{}"
@@ -179,18 +184,15 @@ def resolve_conditions(request: CandidateRequest) -> AppliedConditions:
     )
 
 
-def _national() -> ColumnElement[bool]:
-    return func.cardinality(Policy.sigungu_codes) >= codes.REGION_FREE_MIN_SIGUNGU
-
-
 def region_rank_expr(sido_code: str | None) -> ColumnElement[int]:
     """시도 전체 > 전국 > 일부 시군구.
 
     시도 전체 여부는 그 시도 시군구 코드를 SIDO_WIDE_MIN_RATIO 이상 포함하는지로 본다.
     시도의 시군구 수는 단일 시도 정책 중 최대 시군구 수로 구한다.
+    기초지자체 + 전국 zip(가짜 전국)은 national 이 아니라 sigungu 로 둔다.
     """
     if sido_code is None:
-        return case((_national(), REGION_NATIONAL), else_=REGION_SIGUNGU)
+        return case((effective_national_expr(), REGION_NATIONAL), else_=REGION_SIGUNGU)
     single_sido = aliased(Policy)
     sido_total = (
         select(func.max(func.cardinality(single_sido.sigungu_codes)))
@@ -207,7 +209,7 @@ def region_rank_expr(sido_code: str | None) -> ColumnElement[int]:
         .scalar_subquery()
     )
     return case(
-        (_national(), REGION_NATIONAL),
+        (effective_national_expr(), REGION_NATIONAL),
         (in_sido >= func.coalesce(sido_total, 0) * SIDO_WIDE_MIN_RATIO, REGION_SIDO),
         else_=REGION_SIGUNGU,
     )
@@ -230,9 +232,19 @@ def _policy_filters(
             )
         )
     if conditions.sido_code is not None:
-        filters.append(Policy.sido_codes.contains([conditions.sido_code]))
+        # 가짜 전국(전국 zip + 기초지자체)은 기관명에 해당 시도명이 있을 때만 통과.
+        sido = conditions.sido_code
+        filters.append(
+            and_(
+                Policy.sido_codes.contains([sido]),
+                or_(
+                    ~fake_national_expr(),
+                    org_matches_sido_expr(sido),
+                ),
+            )
+        )
     else:
-        filters.append(_national())
+        filters.append(effective_national_expr())
     if conditions.employment_status is not None:
         job = EMPLOYMENT_JOB_CODE[conditions.employment_status]
         filters.append(

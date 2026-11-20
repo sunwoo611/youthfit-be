@@ -97,7 +97,7 @@ sequenceDiagram
 | `app/schemas/sessions.py` | 세션 요청·응답, 질문(`variable`, 선택지 `value`/`label`, `affected`)·답 모델, 선정 사유 응답(`Recommendation`: DB 카드 + `reason`·`check_points`·`reason_source`)과 캐시 항목(`CachedReason`) |
 | `app/services/candidate_service.py` | 1차 룰 필터 SQL: 마감 제외·나이·시도·취업상태·관심분야 + 역질문 답(혼인·학력·소득·시군구), 정렬(상태 > 시도 전체·유효 전국·일부 시군구 > 마감 임박, 시군구를 알면 내 시군구 정책은 시도 전체와 같은 순위), 정책명 정규화 중복 제거, 공식 링크 선택. 행 조회(`fetch_policy_rows`, limit 없음 허용)와 응답 조립(`build_response`) 분리 (근거: `decisions/005`, `006`, `008`, `013`) |
 | `app/services/region_scope.py` | 전국 zip·기초지자체 기관명 판정. 유효 전국/가짜 전국 SQL·파이썬 헬퍼 (근거: `decisions/013`) |
-| `app/services/question_engine.py` | 역질문 변수 레지스트리와 기대 제거율 점수, 템플릿 질문 생성, 답 반영 (DB·LLM 미사용, 근거: `decisions/008`) |
+| `app/services/question_engine.py` | 역질문 변수 레지스트리와 기대 제거율 점수, 템플릿 질문 생성, 답 반영. 시도 미입력이면 `sido` 질문을 맨 앞 고정 삽입 (DB·LLM 미사용, 근거: `decisions/008`, `013`) |
 | `app/services/question_phrasing.py` | 세션 생성 시 질문 `text`만 LLM 문구화. id 대조·URL/날짜 정리·템플릿 폴백. 후보·선택지는 프롬프트에 넣지 않음 (근거: `decisions/012`) |
 | `app/services/session_service.py` | 세션 생성(전체 후보로 질문 선정 → 연결 밖 문구화 → INSERT)·조회·답변(선택지 대조, `as_of` 기준 재조회, 덮어쓰기, 선정 사유 캐시 비우기·`answers_revision` 증가) |
 | `app/services/recommendation_service.py` | 최종 후보 상위 5건 선정 사유: 프롬프트 구성, LLM 출력 `plcy_no` 대조·URL/날짜 정리, SQL이 보장하는 자격만 쓰는 템플릿 사유, 세션 캐시(리비전 조건부 저장), 읽기·LLM·쓰기 분리 (근거: `decisions/011`) |
@@ -160,4 +160,4 @@ flowchart LR
 - 2026-11-13: LLM 선정 사유(`decisions/011`). `app/llm/client.py`, `recommendation_service`, `POST /v1/sessions/{id}/recommendations`(IP별 10회·전체 120회/10분), 리비전 `e6c1f4a9d3b7`로 `sessions.recommendations`·`answers_revision` 추가, 앱 INFO 로그 설정(`app/core/logging_config.py`)
 - 2026-11-15: `OPENAI_BASE_URL`로 BAZE 게이트웨이 연결. 대표 사용자 A~D 실측(템플릿 0%, 첫 요청 중앙값 ~3.1s, `journal/2026-11-13-llm-reason.md`)
 - 2026-11-16: 역질문 LLM 문구화(`decisions/012`). `question_phrasing`, 세션 생성 시 연결 밖 `text` 다듬기·템플릿 폴백, 변수·선택지는 서버 고정
-- 2026-11-20: 가짜 전국 필터(`decisions/013`). 기초지자체+전국 zip은 유효 전국에서 제외, 해당 시도만 `region_scope=sigungu`로 통과 (`region_scope.py`). 시도 고정 역질문은 후속
+- 2026-11-20: 가짜 전국 필터·시도 고정 역질문(`decisions/013`). 기초지자체+전국 zip은 유효 전국에서 제외, 해당 시도만 `region_scope=sigungu`로 통과 (`region_scope.py`). 시도 없으면 세션 생성 시 `sido` 칩을 맨 앞 고정

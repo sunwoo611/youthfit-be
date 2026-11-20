@@ -102,12 +102,13 @@ Render 무료 플랜은 약 15분 무요청 후 슬립하며, 깨어날 때 첫 
 
 질문 `variable`은 서버가 고릅니다. 현재 가능 값:
 
+- `sido` — 시도 (`conditions.sido_code`가 없을 때 **첫 칩으로 고정** 삽입. `options.value`는 법정 2자리 코드). **`affected`는 항상 0**(제거율 점수 미사용; 답 후 지역 정책이 합류해 후보가 늘 수 있음). 중요도 정렬·숨김에 `affected`를 쓰지 말 것
 - `marriage` — 혼인
 - `school` — 학력
 - `income_bucket` — 본인 연소득 구간
-- `sigungu` — 시군구 (시도에 이름표가 있을 때만)
+- `sigungu` — 시군구 (생성 시점에 시도가 이미 있고 이름표가 있을 때만). 시도 답을 나중에 받아도 질문은 재생성하지 않음(MVP)
 
-`text`는 LLM이 다듬을 수 있고, 실패·키 없으면 템플릿 문구입니다. **`id`·`variable`·`options`는 서버 고정**이므로 FE가 바꾸지 않습니다.
+`text`는 LLM이 다듬을 수 있고, 실패·키 없으면 템플릿 문구입니다. **`id`·`variable`·`options`는 서버 고정**이므로 FE가 바꾸지 않습니다. `affected`는 혼인·학력·소득·시군구처럼 제거율로 고른 변수의 참고값이며, `sido`에서는 의미 없습니다.
 
 ---
 
@@ -240,6 +241,7 @@ Render 무료 플랜은 약 15분 무요청 후 슬립하며, 깨어날 때 첫 
 
 ### 역질문 답 `value` (서버가 options로 내려줌)
 
+시도: 법정 2자리 코드 (`11` 서울 등). **응답 options의 value를 그대로 사용**  
 혼인: `married` | `single`  
 학력: `below_high_school` | `high_school_enrolled` | `high_school_expected` | `high_school_graduated` | `college_enrolled` | `college_expected` | `college_graduated` | `graduate_school`  
 소득: `up_to_3000` | `up_to_5000` | `up_to_7000` | `over_7000`  

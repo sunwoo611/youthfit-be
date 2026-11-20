@@ -15,9 +15,10 @@ from app.ingest import codes
 from app.models import Policy
 
 # 시청·군청·구청, '군 '/'구 ' 표기, 또는 '…도 …시/군' (예: 경상북도 의성군).
+# 시·군은 토큰 끝(공백·문자열 끝)에만 둔다. '지방시대정책국'처럼 중간 '시' 오탐 방지.
 # '경기도청'처럼 광역만 있는 이름은 제외(도 뒤에 공백+시·군이 없음).
 _BASIC_LOCAL_ORG_RE = re.compile(
-    r"(?:시청|군청|구청|군 |구 )|(?:특별자치도|도)\s+\S*[시군]"
+    r"(?:시청|군청|구청|군 |구 )|(?:특별자치도|도)\s+\S*(?:시|군)(?:\s|$)"
 )
 BASIC_LOCAL_ORG_SQL = _BASIC_LOCAL_ORG_RE.pattern
 

@@ -129,9 +129,12 @@ def test_question_conditions_default_to_unknown():
     ("org_name", "expected"),
     [
         ("경상북도 의성군 관광복지과", True),
+        ("경기도 용인시", True),
+        ("전북특별자치도 익산시", True),
         ("의성군청", True),
         ("서울특별시 강남구청", True),
         ("수원시청 청년정책과", True),
+        ("경상북도 지방시대정책국 청년정책과", False),
         ("경기도청", False),
         ("고용노동부", False),
         ("테스트기관", False),

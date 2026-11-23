@@ -11,7 +11,7 @@ from sqlalchemy import insert, select
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from app.api.deps import get_db_connection, get_today
-from app.ingest import codes
+from app.ingest import codes, sigungu
 from app.main import app
 from app.models import Policy
 from app.schemas.candidates import (
@@ -34,11 +34,32 @@ from app.services.candidate_service import (
     search_candidates,
 )
 from app.services.policy_status import Availability, policy_availability
+from app.services.region_scope import (
+    is_basic_local_org,
+    is_effective_national,
+    is_fake_national,
+    is_national_zip,
+)
 
 TODAY = date(2026, 10, 26)
 PAST = date(2026, 10, 25)
 FUTURE = date(2026, 10, 27)
 NATIONAL = [f"{i:05d}" for i in range(codes.REGION_FREE_MIN_SIGUNGU)]
+
+
+def _mixed_national_zip(*, focus_sido: str = "47") -> list[str]:
+    """법정 앞2자리가 섞인 전국 zip. focus 시도 시군구를 전부 넣어 sido 오분류를 유도한다."""
+    codes_list = list(sigungu.SIGUNGU[focus_sido])
+    for sido, names in sigungu.SIGUNGU.items():
+        if sido == focus_sido:
+            continue
+        codes_list.extend(names)
+        if len(codes_list) >= codes.REGION_FREE_MIN_SIGUNGU:
+            break
+    pad = codes.REGION_FREE_MIN_SIGUNGU - len(codes_list)
+    if pad > 0:
+        codes_list.extend(f"99{i:03d}" for i in range(pad))
+    return codes_list[: max(len(codes_list), codes.REGION_FREE_MIN_SIGUNGU)]
 
 
 # --- 순수 함수 ---
@@ -102,6 +123,36 @@ def test_question_conditions_default_to_unknown():
     conditions = resolve_conditions(CandidateRequest(query="서울 사는 25살 취준생"))
     assert conditions.sigungu_codes == []
     assert (conditions.marriage, conditions.school, conditions.income_bucket) == (None,) * 3
+
+
+@pytest.mark.parametrize(
+    ("org_name", "expected"),
+    [
+        ("경상북도 의성군 관광복지과", True),
+        ("경기도 용인시", True),
+        ("전북특별자치도 익산시", True),
+        ("의성군청", True),
+        ("서울특별시 강남구청", True),
+        ("수원시청 청년정책과", True),
+        ("경상북도 지방시대정책국 청년정책과", False),
+        ("경기도청", False),
+        ("고용노동부", False),
+        ("테스트기관", False),
+        (None, False),
+        ("", False),
+    ],
+)
+def test_is_basic_local_org(org_name: str | None, expected: bool):
+    assert is_basic_local_org(org_name) is expected
+
+
+def test_national_zip_and_effective_national_helpers():
+    assert is_national_zip(NATIONAL)
+    assert not is_national_zip(NATIONAL[:-1])
+    assert is_effective_national(NATIONAL, "고용노동부")
+    assert not is_effective_national(NATIONAL, "경상북도 의성군 관광복지과")
+    assert is_fake_national(NATIONAL, "경상북도 의성군 관광복지과")
+    assert not is_fake_national(NATIONAL, "경기도청")
 
 
 @pytest.mark.parametrize(
@@ -354,6 +405,67 @@ async def test_without_region_only_national_policies(db_conn: AsyncConnection):
         _policy("NATIONAL", sido_codes=["11", "41"], sigungu_codes=NATIONAL),
     )
     assert await _policy_nos(db_conn, CandidateRequest()) == ["NATIONAL"]
+
+
+def _fake_national_uiseong(**overrides: object) -> dict:
+    zip_codes = overrides.pop("sigungu_codes", _mixed_national_zip())
+    return _policy(
+        "FAKE-UISEONG",
+        name="의성군 청년 주거 지원",
+        org_name="경상북도 의성군 관광복지과",
+        sido_codes=["11", "41", "47"],
+        sigungu_codes=zip_codes,
+        categories=["주거"],
+        subcategories=["주택 및 거주지"],
+        **overrides,
+    )
+
+
+async def test_fake_national_excluded_without_sido_and_other_sido(
+    db_conn: AsyncConnection,
+):
+    await _insert_policies(
+        db_conn,
+        _fake_national_uiseong(),
+        _policy(
+            "TRUE-NATIONAL",
+            sido_codes=["11", "41", "47"],
+            sigungu_codes=NATIONAL,
+            org_name="고용노동부",
+        ),
+        _policy(
+            "METRO-ZIP",
+            sido_codes=["11", "41", "47"],
+            sigungu_codes=NATIONAL,
+            org_name="경기도청",
+        ),
+    )
+    assert set(await _policy_nos(db_conn, CandidateRequest())) == {
+        "TRUE-NATIONAL",
+        "METRO-ZIP",
+    }
+    assert "FAKE-UISEONG" not in await _policy_nos(
+        db_conn, CandidateRequest(sido_code="11")
+    )
+
+
+async def test_fake_national_kept_for_matching_sido_as_sigungu(
+    db_conn: AsyncConnection,
+):
+    # 경북 단일 시도 정책이 있어야 sido_total이 잡히고, 가짜 전국 zip이
+    # 경북 시군구를 대부분 포함해도 region_scope 는 sigungu 로 남아야 한다.
+    gyeongbuk = list(sigungu.SIGUNGU["47"])
+    mixed = _mixed_national_zip(focus_sido="47")
+    assert len(mixed) >= codes.REGION_FREE_MIN_SIGUNGU
+    await _insert_policies(
+        db_conn,
+        _policy("SIDO-GYEONGBUK", sido_codes=["47"], sigungu_codes=gyeongbuk),
+        _fake_national_uiseong(sigungu_codes=mixed),
+    )
+    result = await find_candidates(db_conn, CandidateRequest(sido_code="47"), TODAY)
+    fake = next(item for item in result.policies.items if item.plcy_no == "FAKE-UISEONG")
+    assert fake.eligibility.region_scope == "sigungu"
+    assert fake.eligibility.sigungu_codes == mixed
 
 
 async def test_finance_interest_requires_finance_subcategory(db_conn: AsyncConnection):

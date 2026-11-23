@@ -80,6 +80,26 @@ def _sigungu_options(conditions: AppliedConditions) -> list[QuestionOption]:
     return [QuestionOption(value=code, label=name) for code, name in names.items()]
 
 
+def _sido_options(_: AppliedConditions) -> list[QuestionOption]:
+    return [QuestionOption(value=code, label=name) for code, name in codes.SIDO.items()]
+
+
+def _answer_sido(value: str) -> dict[str, Any]:
+    if value not in codes.SIDO:
+        raise ValueError(f"알 수 없는 시도 코드: {value}")
+    return {"sido_code": value}
+
+
+# 시도는 기대 제거율로 고르지 않고, 미입력이면 맨 앞 고정 삽입한다 (ADR 013).
+SIDO_VARIABLE = Variable(
+    name=QuestionVariable.SIDO,
+    text="어느 시도에 사시나요?",
+    known=lambda c: c.sido_code is not None,
+    options=_sido_options,
+    keeps=lambda _row, _value: True,
+    answer=_answer_sido,
+)
+
 VARIABLES: tuple[Variable, ...] = (
     Variable(
         name=QuestionVariable.MARRIAGE,
@@ -120,7 +140,9 @@ VARIABLES: tuple[Variable, ...] = (
         answer=lambda value: {"sigungu_codes": sigungu.match_codes(value)},
     ),
 )
-REGISTRY: dict[QuestionVariable, Variable] = {v.name: v for v in VARIABLES}
+REGISTRY: dict[QuestionVariable, Variable] = {
+    v.name: v for v in (*VARIABLES, SIDO_VARIABLE)
+}
 
 
 def removal_score(
@@ -138,7 +160,11 @@ def removal_score(
 
 
 def select_questions(rows: Sequence[Row], conditions: AppliedConditions) -> list[Question]:
-    """아직 모르는 변수를 점수 순으로 최대 MAX_QUESTIONS 개. 기준 미달 변수는 묻지 않는다."""
+    """아직 모르는 변수를 점수 순으로 최대 MAX_QUESTIONS 개. 기준 미달 변수는 묻지 않는다.
+
+    시도가 없으면 점수와 무관하게 시도 질문을 맨 앞에 넣고, 그 자리를 MAX_QUESTIONS 에 포함한다.
+    시군구는 시도가 이미 있을 때만(옵션 2개 이상) 붙는다.
+    """
     scored: list[tuple[float, int, Variable, list[QuestionOption]]] = []
     for variable in VARIABLES:
         if variable.known(conditions):
@@ -150,6 +176,13 @@ def select_questions(rows: Sequence[Row], conditions: AppliedConditions) -> list
         if affected >= MIN_AFFECTED and score >= MIN_SCORE:
             scored.append((score, affected, variable, options))
     scored.sort(key=lambda item: item[0], reverse=True)
+
+    need_sido = conditions.sido_code is None
+    limit = MAX_QUESTIONS - 1 if need_sido else MAX_QUESTIONS
+    picked = list(scored[:limit])
+    if need_sido:
+        picked.insert(0, (0.0, 0, SIDO_VARIABLE, SIDO_VARIABLE.options(conditions)))
+
     sido_name = codes.SIDO.get(conditions.sido_code or "", "")
     return [
         Question(
@@ -160,7 +193,7 @@ def select_questions(rows: Sequence[Row], conditions: AppliedConditions) -> list
             options=options,
             affected=affected,
         )
-        for i, (_, affected, variable, options) in enumerate(scored[:MAX_QUESTIONS], start=1)
+        for i, (_, affected, variable, options) in enumerate(picked, start=1)
     ]
 
 

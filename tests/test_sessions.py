@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 from app.api.deps import get_db_connection, get_db_connector, get_db_transaction, get_today
 from app.api.v1.sessions import ANSWER_LIMIT, CREATE_LIMIT
 from app.core.database import ConnectionFactory
-from app.ingest import sigungu
+from app.ingest import codes, sigungu
 from app.main import app
 from app.models import QuestionSession
 from app.schemas.candidates import AppliedConditions, Marriage, School
@@ -29,9 +29,10 @@ from app.schemas.sessions import (
 )
 from app.services.question_engine import REGISTRY
 from app.services.session_service import InvalidAnswerError, apply_answers, delete_old_sessions
-from tests.test_candidates import FUTURE, TODAY, _insert_policies, _policy
+from tests.test_candidates import FUTURE, NATIONAL, TODAY, _insert_policies, _policy
 
 QUERY = "서울 사는 25살 취준생"
+QUERY_NO_SIDO = "25살 취준생 주거 지원"
 SESSIONS = QuestionSession.__table__
 
 
@@ -63,6 +64,15 @@ def test_apply_answers_sets_answered_fields_only():
     assert conditions.marriage is Marriage.SINGLE
     assert conditions.school is None
     assert apply_answers(BASE, QUESTIONS, []) == BASE
+
+
+def test_apply_answers_sets_sido_code():
+    no_sido = AppliedConditions(
+        age=25, sido_code=None, employment_status=None, interests=[], from_query=[]
+    )
+    sido_q = _question("q1", QuestionVariable.SIDO)
+    conditions = apply_answers(no_sido, [sido_q], [Answer(question_id="q1", values=["41"])])
+    assert conditions.sido_code == "41"
 
 
 @pytest.mark.parametrize(
@@ -254,6 +264,39 @@ async def test_create_session_stores_conditions_questions_and_initial_ids(
     assert stored["answers_revision"] == 0
     assert await _cache_is_sql_null(db_conn, body["session_id"])
     assert stored["expires_at"] - stored["created_at"] == timedelta(hours=24)
+
+
+async def test_create_without_sido_asks_sido_first_and_answer_adds_region(
+    client: AsyncClient, db_conn: AsyncConnection
+):
+    await _insert_policies(
+        db_conn,
+        _policy(
+            "NAT-01",
+            sido_codes=["11", "41"],
+            sigungu_codes=NATIONAL,
+            org_name="고용노동부",
+        ),
+        *(_seoul_wide(f"SEOUL-{i}") for i in range(5)),
+    )
+
+    res = await client.post("/v1/sessions", json={"query": QUERY_NO_SIDO})
+    assert res.status_code == 201, res.text
+    body = res.json()
+
+    assert body["candidates"]["conditions"]["sido_code"] is None
+    assert body["questions"][0]["variable"] == "sido"
+    assert body["questions"][0]["id"] == "q1"
+    assert body["questions"][0]["text"] == "어느 시도에 사시나요?"
+    assert {opt["value"] for opt in body["questions"][0]["options"]} == set(codes.SIDO)
+    assert QuestionVariable.SIGUNGU.value not in [q["variable"] for q in body["questions"]]
+    assert _plcy_nos(body) == {"NAT-01"}
+
+    answered = await _answer(client, body["session_id"], {"q1": "11"})
+    assert answered.status_code == 200, answered.text
+    narrowed = answered.json()
+    assert narrowed["candidates"]["conditions"]["sido_code"] == "11"
+    assert _plcy_nos(narrowed) == {"NAT-01", *(f"SEOUL-{i}" for i in range(5))}
 
 
 async def test_answers_narrow_candidates_and_resubmission_overwrites(

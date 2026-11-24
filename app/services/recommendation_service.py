@@ -49,8 +49,11 @@ RECOMMEND_LIMIT = 5
 REASON_MAX_CHARS = 200
 CHECK_POINT_MAX_CHARS = 100
 MAX_CHECK_POINTS = 3
-# 정책 원문은 길이 편차가 커서 프롬프트에 넣기 전에 자른다.
-POLICY_TEXT_MAX_CHARS = 400
+# 정책 원문은 길이 편차가 커서 프롬프트에 넣기 전에 자른다. 사유는 지원 내용을 가장 많이 쓰고,
+# 추가 자격·제외 대상은 확인할 조건(최대 CHECK_POINT_MAX_CHARS 자)으로만 옮겨지므로 더 짧게 자른다.
+SUPPORT_MAX_CHARS = 300
+DESCRIPTION_MAX_CHARS = 200
+CONDITION_TEXT_MAX_CHARS = 200
 
 SESSIONS = QuestionSession.__table__
 
@@ -93,19 +96,18 @@ _DISTRICT_CITY = {
 }
 
 SYSTEM_PROMPT = """\
-너는 청년 정책 추천 서비스의 안내문 작성자다. 사용자 조건과 정책 정보(JSON)를 보고 정책마다 \
-선정 사유를 쓴다.
+청년 정책 안내문 작성자다. 사용자 조건과 정책 정보(JSON)로 정책마다 선정 사유를 쓴다.
 
 규칙:
-- 입력 JSON에 있는 사실만 쓴다. 지원 금액·자격·혜택을 추측하거나 지어내지 않는다.
-- 링크, URL, 웹사이트 주소, 신청 기간, 마감일은 쓰지 않는다. 화면에 따로 표시된다.
-- plcy_no 는 입력 값을 그대로 쓰고, 입력된 정책마다 한 항목씩 쓴다.
+- 입력 JSON에 있는 사실만 쓴다. 금액·자격·혜택을 추측하거나 지어내지 않는다.
+- 링크, URL, 신청 기간, 마감일은 쓰지 않는다. 화면에 따로 표시된다.
+- plcy_no 는 입력 값 그대로, 입력된 정책마다 한 항목씩 쓴다.
 - 서버가 확인한 자격은 나이, 취업 상태, 혼인, 학력뿐이다. 본인 연소득은 구간이라 정책 소득 \
-기준을 충족하는지 모르고, 거주 시군구를 모르면 지역 충족도 모른다. 이런 조건은 맞는다고 쓰지 \
+기준 충족 여부를 모르고, 거주 시군구를 모르면 지역 충족도 모른다. 이런 조건은 맞는다고 쓰지 \
 말고 check_points 로 안내한다.
 - reason: 서버가 확인한 자격과 핵심 지원 내용을 해요체 2문장, 200자 이내로 쓴다.
-- check_points: 사용자 조건으로는 아직 판정하지 못한 자격(추가 자격, 제외 대상, 소득, \
-거주 시군구 등)을 사용자가 직접 확인할 문장으로 최대 3개 쓴다. 없으면 빈 목록이다.
+- check_points: 아직 판정하지 못한 자격(추가 자격, 제외 대상, 소득, 거주 시군구 등)을 \
+사용자가 직접 확인할 문장으로 최대 3개 쓴다. 없으면 빈 목록이다.
 """
 
 
@@ -153,7 +155,8 @@ async def recommend(
     """없거나 만료된 세션이면 SessionNotFoundError.
 
     후보 상위 POLICY_LIMIT 안에서 exclude 를 뺀 뒤 최대 RECOMMEND_LIMIT 건과 has_more 를 준다.
-    exclude 가 비어 있을 때만 사유 캐시를 저장·전체 재사용하고, 있으면 plcy_no 별 부분 재사용만 한다.
+    exclude 가 비어 있을 때만 사유 캐시를 저장·전체 재사용하고, 있으면 plcy_no 별로 부분 재사용만
+    한다.
     """
     async with connect() as conn:
         context = await _read(conn, session_id, exclude_plcy_nos)
@@ -457,16 +460,25 @@ def _income_certain(conditions: AppliedConditions, target: Target) -> bool:
     )
 
 
+def _description(raw: str | None, support: str) -> str:
+    """정책 설명. 지원 내용과 같은 말이 겹치면 토큰만 늘므로 뺀다."""
+    description = clean_text(raw, DESCRIPTION_MAX_CHARS)
+    if description and support and (description in support or description[:30] == support[:30]):
+        return ""
+    return description
+
+
 def _policy_facts(conditions: AppliedConditions, target: Target) -> dict[str, Any]:
     card, row, text = target.card, target.row, target.text
     marriage = row["marriage_code"]
+    support = clean_text(text.get("support_content"), SUPPORT_MAX_CHARS)
     facts: dict[str, Any] = {
         "plcy_no": card.plcy_no,
         "정책명": card.name,
         "운영 기관": card.org_name,
         "분류": card.categories,
-        "지원 내용": clean_text(text.get("support_content"), POLICY_TEXT_MAX_CHARS),
-        "정책 설명": clean_text(text.get("description"), POLICY_TEXT_MAX_CHARS),
+        "지원 내용": support,
+        "정책 설명": _description(text.get("description"), support),
         "나이": _age_text(card) or "제한 없음",
         "지역": _region_text(card, conditions.sido_code),
         "취업 상태": ", ".join(card.eligibility.employment) or "제한 없음",
@@ -478,10 +490,9 @@ def _policy_facts(conditions: AppliedConditions, target: Target) -> dict[str, An
         )
         or "제한 없음",
         "소득": _income_text(target) or "제한 없음",
-        "특화 대상": ", ".join(_restricted(row["special_codes"], codes.SPECIAL, codes.SPECIAL_ANY))
-        or "없음",
-        "추가 자격": clean_text(text.get("extra_qualification"), POLICY_TEXT_MAX_CHARS),
-        "제외 대상": clean_text(text.get("exclusion"), POLICY_TEXT_MAX_CHARS),
+        "특화 대상": ", ".join(_restricted(row["special_codes"], codes.SPECIAL, codes.SPECIAL_ANY)),
+        "추가 자격": clean_text(text.get("extra_qualification"), CONDITION_TEXT_MAX_CHARS),
+        "제외 대상": clean_text(text.get("exclusion"), CONDITION_TEXT_MAX_CHARS),
     }
     return {key: value for key, value in facts.items() if value not in ("", None, [])}
 
@@ -491,7 +502,7 @@ def build_prompt(conditions: AppliedConditions, targets: Sequence[Target]) -> st
         "사용자 조건": _user_profile(conditions) or "알려준 조건 없음",
         "정책": [_policy_facts(conditions, target) for target in targets],
     }
-    return json.dumps(payload, ensure_ascii=False)
+    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
 
 def template_reason(conditions: AppliedConditions, target: Target) -> CachedReason:

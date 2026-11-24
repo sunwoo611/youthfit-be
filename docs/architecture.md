@@ -1,6 +1,6 @@
 # 아키텍처
 
-> 현재 구현 상태: 스키마, 일 배치 적재, 필드 채움률 리포트, 1차 룰 필터 API(`POST /v1/candidates`, 가짜 전국 제외·`region_scope`, 근거: `decisions/013`), 역질문 세션 API(`/v1/sessions`, 서버 선정 변수·선택지 + 시도 미입력 시 `sido` 칩 고정 + LLM 질문 문구화·템플릿 폴백, 답변 반영 재필터, 근거: `decisions/008`, `012`, `013`), 최종 후보 LLM 선정 사유(`POST /v1/sessions/{id}/recommendations`, 템플릿 대체·세션 캐시, 근거: `decisions/011`)까지. 추천 대상은 청년 정책만이다(적금 제외, 근거: `decisions/010`).
+> 현재 구현 상태: 스키마, 일 배치 적재, 필드 채움률 리포트, 1차 룰 필터 API(`POST /v1/candidates`, 가짜 전국 제외·`region_scope`, 근거: `decisions/013`), 역질문 세션 API(`/v1/sessions`, 서버 선정 변수·선택지 + 시도 미입력 시 `sido` 칩 고정 + LLM 질문 문구화·템플릿 폴백, 답변 반영 재필터, 근거: `decisions/008`, `012`, `013`), 최종 후보 LLM 선정 사유(`POST /v1/sessions/{id}/recommendations`, 템플릿 대체·세션 캐시, `exclude_plcy_nos`·`has_more`로 상위 50 안 「더 보기」, 근거: `decisions/011`, `014`)까지. 추천 대상은 청년 정책만이다(적금 제외, 근거: `decisions/010`).
 
 ## 처리 흐름
 
@@ -37,7 +37,7 @@ flowchart LR
 1. 자연어 입력 → 지역·취업상태·관심분야 1차 키워드 추출
 2. 로컬 DB에서 정책 후보군 선별 (30 ~ 50). 시도 없으면 유효 전국만, 가짜 전국(기초지자체+전국 zip)은 제외 (근거: `decisions/013`)
 3. 후보군을 가르는 핵심 자격 변수 식별(서버가 기대 제거율로 선정) → 3~5개 역질문(JSON). 시도 미입력이면 `sido`를 맨 앞 고정. 변수·선택지는 서버 고정, `text`만 LLM이 다듬고 실패·키 없음이면 템플릿 유지 (근거: `decisions/008`, `012`, `013`)
-4. 답변으로 최종 후보 확정 → 상위 5건에 LLM이 DB 메타데이터 기반 선정 사유 서술. 공식 URL·마감일·자격 표시는 DB 카드로만 만들고, LLM 실패·키 없음이면 템플릿 사유 (근거: `decisions/011`)
+4. 답변으로 최종 후보 확정 → 상위 5건에 LLM이 DB 메타데이터 기반 선정 사유 서술. 공식 URL·마감일·자격 표시는 DB 카드로만 만들고, LLM 실패·키 없음이면 템플릿 사유. `exclude_plcy_nos`로 상위 50 안 다음 장·`has_more` (근거: `decisions/011`, `014`)
 
 ### 역질문 세션 흐름
 
@@ -74,16 +74,19 @@ sequenceDiagram
   participant API as SessionsAPI
   participant PG as PostgreSQL
   participant LLM as OpenAI
-  FE->>API: "POST /v1/sessions/{id}/recommendations"
-  API->>PG: "읽기 트랜잭션: 세션, 최종 조건 상위 5 정책, 서술용 원문, 캐시"
-  alt 캐시가 현재 상위 5건을 모두 덮음
-    API-->>FE: "DB 카드 + 캐시된 사유"
-  else 캐시 없음·무효
+  FE->>API: "POST /v1/sessions/{id}/recommendations (exclude 선택)"
+  API->>PG: "읽기 트랜잭션: 세션, 상위 50, exclude 후 최대 5, 서술용 원문, 캐시"
+  alt exclude 없음이고 캐시가 현재 상위 5건을 모두 덮음
+    API-->>FE: "DB 카드 + 캐시된 사유 + has_more"
+  else exclude 없음·캐시 무효
     API->>LLM: "사용자 조건 + 정책 사실 JSON (연결 없이, 전체 15초)"
     LLM-->>API: "plcy_no별 reason, check_points"
     API->>API: "plcy_no 대조, URL·날짜 정리, 빠진 정책은 템플릿"
     API->>PG: "쓰기 트랜잭션: 리비전·만료 조건부 캐시 저장 (LLM 사유가 있을 때만)"
-    API-->>FE: "DB 카드(링크·마감일) + 사유 + reason_source"
+    API-->>FE: "DB 카드 + 사유 + reason_source + has_more"
+  else exclude 있음
+    API->>LLM: "캐시에 없는 대상만 사유 (연결 없이)"
+    API-->>FE: "다음 장 + has_more (캐시 미저장)"
   end
 ```
 
@@ -94,13 +97,14 @@ sequenceDiagram
 | `app/main.py` | FastAPI 앱 팩토리 |
 | `app/api/` | 라우터 (`health`, `v1/candidates`, `v1/sessions`), `deps.py`(읽기 연결, 쓰기 트랜잭션 `get_db_transaction`, 호출마다 짧은 트랜잭션을 여는 `get_db_connector`, LLM 클라이언트 `get_llm_client`, 기준일 의존성), `rate_limit.py`(세션 쓰기·선정 사유 경로의 메모리 기반 IP별·전체 요청 제한, 근거: `decisions/009`, `011`) |
 | `app/schemas/candidates.py` | 후보 API 요청·응답 Pydantic 모델 (취업상태·관심분야 enum, 링크 출처). `AppliedConditions`에 역질문 답 필드(혼인·학력·소득 구간·시군구 코드) |
-| `app/schemas/sessions.py` | 세션 요청·응답, 질문(`variable`, 선택지 `value`/`label`, `affected`)·답 모델, 선정 사유 응답(`Recommendation`: DB 카드 + `reason`·`check_points`·`reason_source`)과 캐시 항목(`CachedReason`) |
+| `app/schemas/sessions.py` | 세션 요청·응답, 질문(`variable`, 선택지 `value`/`label`, `affected`)·답 모델, 선정 사유 요청(`RecommendationRequest.exclude_plcy_nos`)·응답(`Recommendation` + `has_more`)과 캐시 항목(`CachedReason`) |
+
 | `app/services/candidate_service.py` | 1차 룰 필터 SQL: 마감 제외·나이·시도·취업상태·관심분야 + 역질문 답(혼인·학력·소득·시군구), 정렬(상태 > 시도 전체·유효 전국·일부 시군구 > 마감 임박, 시군구를 알면 내 시군구 정책은 시도 전체와 같은 순위), 정책명 정규화 중복 제거, 공식 링크 선택. 행 조회(`fetch_policy_rows`, limit 없음 허용)와 응답 조립(`build_response`) 분리 (근거: `decisions/005`, `006`, `008`, `013`) |
 | `app/services/region_scope.py` | 전국 zip·기초지자체 기관명 판정. 유효 전국/가짜 전국 SQL·파이썬 헬퍼 (근거: `decisions/013`) |
 | `app/services/question_engine.py` | 역질문 변수 레지스트리와 기대 제거율 점수, 템플릿 질문 생성, 답 반영. 시도 미입력이면 `sido` 질문을 맨 앞 고정 삽입 (DB·LLM 미사용, 근거: `decisions/008`, `013`) |
 | `app/services/question_phrasing.py` | 세션 생성 시 질문 `text`만 LLM 문구화. id 대조·URL/날짜 정리·템플릿 폴백. 후보·선택지는 프롬프트에 넣지 않음 (근거: `decisions/012`) |
 | `app/services/session_service.py` | 세션 생성(전체 후보로 질문 선정 → 연결 밖 문구화 → INSERT)·조회·답변(선택지 대조, `as_of` 기준 재조회, 덮어쓰기, 선정 사유 캐시 비우기·`answers_revision` 증가) |
-| `app/services/recommendation_service.py` | 최종 후보 상위 5건 선정 사유: 프롬프트 구성, LLM 출력 `plcy_no` 대조·URL/날짜 정리, SQL이 보장하는 자격만 쓰는 템플릿 사유, 세션 캐시(리비전 조건부 저장), 읽기·LLM·쓰기 분리 (근거: `decisions/011`) |
+| `app/services/recommendation_service.py` | 최종 후보 상위 5건 선정 사유: 프롬프트 구성, LLM 출력 `plcy_no` 대조·URL/날짜 정리, SQL이 보장하는 자격만 쓰는 템플릿 사유, 세션 캐시(리비전 조건부 저장), `exclude`·`has_more`(상위 50 풀, exclude 시 부분 재사용·미저장), 읽기·LLM·쓰기 분리 (근거: `decisions/011`, `014`) |
 | `app/llm/client.py` | `LlmClient` 프로토콜과 `OpenAIClient`(Pydantic 구조화 출력, 재시도 포함 전체 시간 한도, 모든 실패를 `LlmError`로 통일, 토큰·지연 로그). `OPENAI_BASE_URL`이 있으면 그 호스트(BAZE 등 OpenAI 호환 게이트웨이). 키가 없으면 `None` |
 | `app/services/query_hints.py` | 자연어 질의에서 지역·취업상태·나이·관심분야 규칙 사전 추출 (LLM 미사용) |
 | `app/core/config.py` | `pydantic-settings` 기반 설정 (CORS 허용 출처, `postgres://`·`sslmode` URL을 asyncpg 형식으로 변환) |
@@ -161,3 +165,4 @@ flowchart LR
 - 2026-11-15: `OPENAI_BASE_URL`로 BAZE 게이트웨이 연결. 대표 사용자 A~D 실측(템플릿 0%, 첫 요청 중앙값 ~3.1s, `journal/2026-11-13-llm-reason.md`)
 - 2026-11-16: 역질문 LLM 문구화(`decisions/012`). `question_phrasing`, 세션 생성 시 연결 밖 `text` 다듬기·템플릿 폴백, 변수·선택지는 서버 고정
 - 2026-11-20: 가짜 전국 필터·시도 고정 역질문(`decisions/013`, `journal/2026-11-20-fake-national-sido-question.md`). 기초지자체+전국 zip은 유효 전국에서 제외, 해당 시도만 `region_scope=sigungu`로 통과 (`region_scope.py`). 시도 없으면 세션 생성 시 `sido` 칩을 맨 앞 고정. 로컬 DB: 전국 zip 694건 중 가짜 전국 19건 제외
+- 2026-11-24: 추천 「더 보기」(`decisions/014`). `exclude_plcy_nos`·`has_more`, 상위 50 풀, exclude 시 부분 캐시 재사용·첫 장 캐시 미파괴

@@ -137,9 +137,23 @@ Render 무료 플랜은 약 15분 무요청 후 슬립하며, 깨어날 때 첫 
 
 ## 3) 최종 추천 — `POST /v1/sessions/{session_id}/recommendations`
 
-요청 body 없음. 답을 반영한 상위 **최대 5건**과 선정 사유를 돌려줍니다.
+답을 반영한 상위 **최대 5건**과 선정 사유를 돌려줍니다. body를 생략하거나 `{}`면 첫 장(캐시 가능)입니다.
 
-첫 호출은 LLM이 있으면 수 초(실측 중앙값 약 3초대, 최대 약 15초 대기 가능), 같은 답으로 다시 치면 캐시를 씁니다. 답을 바꾸면 캐시는 무효화됩니다.
+첫 호출은 LLM이 있으면 수 초(실측 중앙값 약 3초대, 최대 약 15초 대기 가능), 같은 답·같은 첫 장이면 캐시를 씁니다. 답을 바꾸면 캐시는 무효화됩니다.
+
+### 요청 (선택)
+
+```json
+{ "exclude_plcy_nos": ["이미 받은 policy.plcy_no", "…"] }
+```
+
+| 필드 | 규칙 |
+|------|------|
+| `exclude_plcy_nos` | 기본 `[]`, 최대 45개. 중복은 서버가 제거. 빈 문자열·46개 이상은 `422` |
+
+**「다른 거 더」**: 버튼이든 채팅 문구든 FE가 “다음 장”으로 판단한 뒤, 화면에 쌓인 `plcy_no`를 누적해 `exclude_plcy_nos`로 같은 URL을 다시 호출하면 됩니다. 새 세션·새 질의가 아닙니다. 목록을 append할지 교체할지는 FE 정책입니다.
+
+풀은 후보 정렬 상위 50 안입니다. 남은 후보가 없으면 `items: []`, `has_more: false`(에러 아님).
 
 ### 응답 구조 (요약)
 
@@ -147,6 +161,7 @@ Render 무료 플랜은 약 15분 무요청 후 슬립하며, 깨어날 때 첫 
 {
   "session_id": "…",
   "as_of": "2026-11-16",
+  "has_more": true,
   "items": [
     {
       "policy": { "plcy_no": "…", "name": "…", "official_url": "https://…", "…": "…" },
@@ -158,6 +173,8 @@ Render 무료 플랜은 약 15분 무요청 후 슬립하며, 깨어날 때 첫 
 }
 ```
 
+`has_more`: 상위 50에서 exclude를 뺀 뒤 **6건 이상**이면 `true`(「더 보기」 UI·안내용).
+
 ### FE 필수 규칙 (환각 방지)
 
 1. **카드의 링크·마감일·자격 표시**는 항상 `items[].policy`의 DB 값만 사용합니다.  
@@ -168,6 +185,7 @@ Render 무료 플랜은 약 15분 무요청 후 슬립하며, 깨어날 때 첫 
 2. `reason` / `check_points`는 **서술용 문구**입니다. 여기서 URL·날짜를 파싱해 링크로 쓰지 마세요.
 3. `reason_source: "template"`도 정상 응답입니다 (키 없음·LLM 실패·검증 탈락). 별도 에러 UI를 띄울 필요 없습니다.
 4. `check_points`는 사용자가 직접 확인할 조건(최대 3개). 카드 하단에 체크리스트로 보여 주면 됩니다.
+5. 「더 보기」는 `has_more`가 true일 때만. 다음 요청의 `exclude_plcy_nos`에는 **이미 화면에 쌓인** `plcy_no`를 넣습니다.
 
 ---
 
@@ -302,7 +320,7 @@ $answers = @{
 $answered = Invoke-RestMethod -Method Post -Uri "$base/v1/sessions/$sid/answers" `
   -ContentType "application/json" -Body $answers
 
-# 3) 추천
+# 3) 추천 (첫 장)
 $rec = Invoke-RestMethod -Method Post -Uri "$base/v1/sessions/$sid/recommendations"
 $rec.items | ForEach-Object {
   [pscustomobject]@{
@@ -311,6 +329,14 @@ $rec.items | ForEach-Object {
     reason_source = $_.reason_source
     reason = $_.reason
   }
+}
+
+# 4) 더 보기 (화면에 쌓인 plcy_no를 누적)
+if ($rec.has_more) {
+  $seen = @($rec.items | ForEach-Object { $_.policy.plcy_no })
+  $more = Invoke-RestMethod -Method Post -Uri "$base/v1/sessions/$sid/recommendations" `
+    -ContentType "application/json" `
+    -Body (@{ exclude_plcy_nos = $seen } | ConvertTo-Json)
 }
 ```
 
@@ -323,6 +349,7 @@ $rec.items | ForEach-Object {
 - [ ] 답 재제출 시 “전체 덮어쓰기” 동작에 맞게 로컬 상태 관리
 - [ ] 결과 카드 링크는 `policy.official_url`만 사용
 - [ ] `reason_source === "template"`을 에러로 취급하지 않음
+- [ ] `has_more`면 누적 `exclude_plcy_nos`로 같은 recommendations URL 재호출
 - [ ] `404` 시 세션 만료 UI → 처음부터 다시
 - [ ] `429` 시 `Retry-After` 후 재시도 안내
 - [ ] 개발 서버 슬립(첫 요청 지연) UX 고려

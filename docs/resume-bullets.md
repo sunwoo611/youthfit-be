@@ -71,3 +71,11 @@
 - **Action**: OpenAI 호환 구조화 출력 클라이언트를 두고 `plcy_no` 대조·URL/날짜 정리·템플릿 대체·`answers_revision` 조건부 캐시를 서버에 넣었다. 소득·시도 전체를 "맞다"고 쓰지 않도록 프롬프트·템플릿을 고쳤다. 대표 사용자 A~D로 BAZE `gpt-5.4-mini` 실측을 돌렸다.
 - **Result**: 20건 전부 LLM 사유(템플릿 0%). 첫 요청 중앙값 ~3.1s, 캐시 ~60ms. 세션당 약 입력 1.7k·출력 0.4k 토큰. DB 원문 대조 표본에서 URL·날짜·원문 없는 금액 오류 0건.
 - 근거: [ADR 011](decisions/011-llm-recommendation-reason.md), [journal 2026-11-13](journal/2026-11-13-llm-reason.md)
+
+### 9. 추천 「더 보기」를 exclude로 열고 첫 장 캐시는 유지
+
+- **Situation**: 선정 사유 API는 상위 5건만 줘 FE가 「다른 거 더」를 보여줄 계약이 없었고, `offset`은 정렬 변화 시 중복·누락 위험이 있었다.
+- **Task**: 같은 세션에서 다음 장을 받되, 첫 화면 사유 캐시를 깨지 않는다.
+- **Action**: `exclude_plcy_nos`(최대 45)와 `has_more`를 추가하고 풀을 후보 상위 50으로 한정했다. exclude가 비어 있을 때만 캐시를 저장·전체 재사용하고, exclude 장에서는 plcy_no 부분 재사용만 하며 캐시는 덮어쓰지 않았다.
+- **Result**: body 생략 호환 유지. exclude 다음 장·전부 제외·46개 422·캐시 비파괴를 테스트로 고정. FE는 누적 ID만내면 「더 보기」 가능.
+- 근거: [ADR 014](decisions/014-recommendation-exclude.md), [frontend-api](frontend-api.md)

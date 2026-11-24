@@ -35,6 +35,7 @@ from app.services.candidate_service import (
     EARN_MAX_TRUSTED_MIN,
     EMPLOYMENT_JOB_CODE,
     MARRIAGE_CODE,
+    POLICY_LIMIT,
     SCHOOL_CODE,
     build_response,
     fetch_policy_rows,
@@ -138,7 +139,9 @@ class _Context:
     revision: int
     conditions: AppliedConditions
     targets: list[Target]
-    cached: list[CachedReason] | None
+    has_more: bool
+    persist_cache: bool
+    recommendations_raw: Any
 
 
 async def recommend(
@@ -149,27 +152,13 @@ async def recommend(
 ) -> RecommendationResponse:
     """없거나 만료된 세션이면 SessionNotFoundError.
 
-    exclude_plcy_nos 필터·has_more 계산은 상위 50 조회 확장에서 채운다.
+    후보 상위 POLICY_LIMIT 안에서 exclude 를 뺀 뒤 최대 RECOMMEND_LIMIT 건과 has_more 를 준다.
+    exclude 가 비어 있을 때만 사유 캐시를 저장·전체 재사용하고, 있으면 plcy_no 별 부분 재사용만 한다.
     """
-    _ = exclude_plcy_nos
     async with connect() as conn:
-        context = await _read(conn, session_id)
+        context = await _read(conn, session_id, exclude_plcy_nos)
 
-    reasons = context.cached
-    if reasons is None:
-        reasons, from_llm = await write_reasons(llm, context.conditions, context.targets)
-        if from_llm:
-            try:
-                async with connect() as conn:
-                    saved = await _save(conn, session_id, context.revision, reasons)
-            except (OSError, SQLAlchemyError) as exc:
-                # 사유는 이미 만들었으므로 캐시만 포기하고 응답한다.
-                logger.warning(
-                    "세션 %s 선정 사유 캐시 저장 실패: %s", session_id, type(exc).__name__
-                )
-            else:
-                if not saved:
-                    logger.info("세션 %s 답이 바뀌어 선정 사유를 캐시하지 않음", session_id)
+    reasons = await _resolve_reasons(connect, llm, session_id, context)
 
     return RecommendationResponse(
         session_id=session_id,
@@ -178,27 +167,74 @@ async def recommend(
             Recommendation(policy=target.card, **reason.model_dump(exclude={"plcy_no"}))
             for target, reason in zip(context.targets, reasons, strict=True)
         ],
-        has_more=False,
+        has_more=context.has_more,
     )
 
 
-async def _read(conn: AsyncConnection, session_id: uuid.UUID) -> _Context:
+async def _resolve_reasons(
+    connect: ConnectionFactory,
+    llm: LlmClient | None,
+    session_id: uuid.UUID,
+    context: _Context,
+) -> list[CachedReason]:
+    if context.persist_cache:
+        cached = cached_reasons(context.recommendations_raw, context.targets)
+        if cached is not None:
+            return cached
+        reasons, from_llm = await write_reasons(llm, context.conditions, context.targets)
+        if from_llm:
+            await _try_save(connect, session_id, context.revision, reasons)
+        return reasons
+
+    by_no = cache_by_plcy_no(context.recommendations_raw)
+    missing = [target for target in context.targets if target.card.plcy_no not in by_no]
+    if missing:
+        filled, _ = await write_reasons(llm, context.conditions, missing)
+        by_no = {**by_no, **{reason.plcy_no: reason for reason in filled}}
+    return [by_no[target.card.plcy_no] for target in context.targets]
+
+
+async def _try_save(
+    connect: ConnectionFactory,
+    session_id: uuid.UUID,
+    revision: int,
+    reasons: Sequence[CachedReason],
+) -> None:
+    try:
+        async with connect() as conn:
+            saved = await _save(conn, session_id, revision, reasons)
+    except (OSError, SQLAlchemyError) as exc:
+        # 사유는 이미 만들었으므로 캐시만 포기하고 응답한다.
+        logger.warning("세션 %s 선정 사유 캐시 저장 실패: %s", session_id, type(exc).__name__)
+    else:
+        if not saved:
+            logger.info("세션 %s 답이 바뀌어 선정 사유를 캐시하지 않음", session_id)
+
+
+async def _read(
+    conn: AsyncConnection, session_id: uuid.UUID, exclude_plcy_nos: Sequence[str]
+) -> _Context:
     session = await load_session(conn, session_id)
     conditions = session_conditions(session)
     as_of = session["as_of"]
-    rows = await fetch_policy_rows(conn, conditions, as_of, limit=RECOMMEND_LIMIT)
-    cards = build_response(conditions, as_of, rows).policies.items
+    rows = await fetch_policy_rows(conn, conditions, as_of, limit=POLICY_LIMIT)
+    excluded = set(exclude_plcy_nos)
+    remaining = [row for row in rows if row["plcy_no"] not in excluded]
+    selected = remaining[:RECOMMEND_LIMIT]
+    cards = build_response(conditions, as_of, selected).policies.items
     texts = await _policy_texts(conn, [card.plcy_no for card in cards])
     targets = [
         Target(card=card, row=row, text=texts.get(card.plcy_no, {}))
-        for card, row in zip(cards, rows, strict=True)
+        for card, row in zip(cards, selected, strict=True)
     ]
     return _Context(
         as_of=as_of,
         revision=session["answers_revision"],
         conditions=conditions,
         targets=targets,
-        cached=cached_reasons(session["recommendations"], targets),
+        has_more=len(remaining) > RECOMMEND_LIMIT,
+        persist_cache=not exclude_plcy_nos,
+        recommendations_raw=session["recommendations"],
     )
 
 
@@ -220,10 +256,22 @@ async def _policy_texts(
     return {row["plcy_no"]: row for row in result.mappings()}
 
 
+def cache_by_plcy_no(raw: Any) -> dict[str, CachedReason]:
+    """캐시를 plcy_no → 사유로 푼다. 없거나 형식이 틀리면 빈 dict (부분 재사용용)."""
+    if raw is None:
+        return {}
+    try:
+        return {reason.plcy_no: reason for reason in _CACHE.validate_python(raw)}
+    except ValidationError:
+        logger.warning("선정 사유 캐시 형식이 맞지 않아 다시 만든다")
+        return {}
+
+
 def cached_reasons(raw: Any, targets: Sequence[Target]) -> list[CachedReason] | None:
     """캐시가 지금 상위 정책을 모두 덮을 때만 그 순서대로 돌려준다.
 
     형식이 낡았거나 정책 구성이 바뀌었으면 없는 것으로 보고 다시 만든다.
+    exclude 없는 첫 장에서만 쓴다. exclude 가 있으면 cache_by_plcy_no 부분 재사용.
     """
     if raw is None:
         return None

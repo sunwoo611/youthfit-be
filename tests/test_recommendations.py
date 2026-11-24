@@ -528,6 +528,67 @@ async def test_recommend_missing_session_raises_not_found(db_conn: AsyncConnecti
         await svc.recommend(_connect(db_conn), None, uuid.uuid4())
 
 
+async def test_recommend_exclude_returns_next_page_without_overwriting_cache(
+    db_conn: AsyncConnection,
+):
+    """상위 5를 exclude 하면 다른 후보가 오고, 첫 장 캐시는 그대로다."""
+    # plcy_no 는 정렬 키라 두 자리로 맞춰 문자열 정렬이 숫자 순과 같게 한다.
+    await _insert_policies(
+        db_conn,
+        *(
+            _seoul_wide(f"P-{i:02d}", support_content=f"지원 {i}", apply_url="https://a.go.kr")
+            for i in range(12)
+        ),
+    )
+    created = await create_session(
+        _connect(db_conn), None, SessionCreateRequest(query="서울 25살 취준생"), TODAY
+    )
+    session_id = created.session_id
+    llm = FakeLlm(
+        [
+            LlmReason(plcy_no=f"P-{i:02d}", reason=f"사유 {i}", check_points=[])
+            for i in range(12)
+        ]
+    )
+
+    first = await svc.recommend(_connect(db_conn), llm, session_id)
+    assert first.has_more is True
+    assert len(first.items) == svc.RECOMMEND_LIMIT
+    first_nos = [item.policy.plcy_no for item in first.items]
+    assert first_nos == [f"P-{i:02d}" for i in range(5)]
+    cached = await _cache(db_conn, session_id)
+    assert [row["plcy_no"] for row in cached] == first_nos
+    prompts_after_first = len(llm.prompts)
+
+    second = await svc.recommend(_connect(db_conn), llm, session_id, first_nos)
+    assert [item.policy.plcy_no for item in second.items] == [f"P-{i:02d}" for i in range(5, 10)]
+    assert second.has_more is True
+    assert set(item.policy.plcy_no for item in second.items).isdisjoint(first_nos)
+    assert await _cache(db_conn, session_id) == cached
+    assert len(llm.prompts) == prompts_after_first + 1
+
+    # body 없이 다시 호출하면 첫 장·캐시 그대로다.
+    again = await svc.recommend(_connect(db_conn), llm, session_id)
+    assert again == first
+    assert len(llm.prompts) == prompts_after_first + 1
+
+
+async def test_recommend_exclude_all_returns_empty(db_conn: AsyncConnection):
+    session_id = await _session(db_conn)
+    llm = _llm_for_all()
+    first = await svc.recommend(_connect(db_conn), llm, session_id)
+    all_nos = [f"P-{i}" for i in range(7)]
+
+    empty = await svc.recommend(_connect(db_conn), llm, session_id, all_nos)
+
+    assert empty.items == []
+    assert empty.has_more is False
+    assert await _cache(db_conn, session_id) is not None
+    assert [item.policy.plcy_no for item in first.items] == [
+        row["plcy_no"] for row in await _cache(db_conn, session_id)
+    ]
+
+
 # --- API ---
 
 
@@ -560,6 +621,7 @@ async def test_api_returns_db_cards_with_reasons_and_reuses_cache(
     assert body["session_id"] == str(session_id)
     assert body["as_of"] == TODAY.isoformat()
     assert len(body["items"]) == svc.RECOMMEND_LIMIT
+    assert body["has_more"] is True
     item = body["items"][0]
     assert item["reason_source"] == "llm"
     assert item["policy"]["official_url"] == "https://a.go.kr"
@@ -568,6 +630,35 @@ async def test_api_returns_db_cards_with_reasons_and_reuses_cache(
     again = await client.post(_recommend_url(session_id))
     assert again.json() == body
     assert len(llm.prompts) == 1
+
+
+async def test_api_exclude_returns_next_page(client: AsyncClient, db_conn: AsyncConnection):
+    session_id = await _session(db_conn)
+    llm = _llm_for_all()
+    app.dependency_overrides[get_llm_client] = lambda: llm
+
+    first = await client.post(_recommend_url(session_id))
+    assert first.status_code == 200, first.text
+    first_nos = [item["policy"]["plcy_no"] for item in first.json()["items"]]
+
+    second = await client.post(
+        _recommend_url(session_id), json={"exclude_plcy_nos": first_nos}
+    )
+    assert second.status_code == 200, second.text
+    body = second.json()
+    assert [item["policy"]["plcy_no"] for item in body["items"]] == ["P-5", "P-6"]
+    assert body["has_more"] is False
+
+
+async def test_api_exclude_over_limit_is_422(client: AsyncClient, db_conn: AsyncConnection):
+    session_id = await _session(db_conn)
+
+    res = await client.post(
+        _recommend_url(session_id),
+        json={"exclude_plcy_nos": [f"P-{i}" for i in range(46)]},
+    )
+
+    assert res.status_code == 422
 
 
 async def test_api_without_llm_key_answers_with_template(

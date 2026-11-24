@@ -19,6 +19,7 @@ from app.core.database import ConnectionFactory
 from app.llm.client import LlmClient
 from app.schemas.sessions import (
     AnswerRequest,
+    RecommendationRequest,
     RecommendationResponse,
     SessionCreateRequest,
     SessionResponse,
@@ -101,14 +102,19 @@ async def recommend(
     session_id: uuid.UUID,
     connect: Annotated[ConnectionFactory, Depends(get_db_connector)],
     llm: Annotated[LlmClient | None, Depends(get_llm_client)],
+    body: RecommendationRequest | None = None,
 ) -> RecommendationResponse:
     """답을 반영한 최종 후보 상위 정책과 선정 사유. 링크·마감일·자격은 DB 값이다.
 
     같은 답이면 저장해 둔 사유를 다시 쓴다. LLM 이 없거나 실패하면 템플릿 사유
     (`reason_source: "template"`)로 응답하고 저장하지 않는다.
+    body.exclude_plcy_nos 가 있으면 이미 본 정책을 빼고 다음 장을 준다.
     """
+    request = body or RecommendationRequest()
     try:
-        return await recommendation_service.recommend(connect, llm, session_id)
+        return await recommendation_service.recommend(
+            connect, llm, session_id, request.exclude_plcy_nos
+        )
     except SessionNotFoundError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, _NOT_FOUND) from exc
     except (OSError, SQLAlchemyError) as exc:

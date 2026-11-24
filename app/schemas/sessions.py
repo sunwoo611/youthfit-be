@@ -5,7 +5,7 @@ from datetime import date, datetime
 from enum import StrEnum
 from typing import Annotated, Literal, Self
 
-from pydantic import BaseModel, Field, StringConstraints, model_validator
+from pydantic import BaseModel, Field, StringConstraints, field_validator, model_validator
 
 from app.schemas.candidates import CandidateRequest, CandidateResponse, PolicyCandidate
 
@@ -93,7 +93,28 @@ class Recommendation(RecommendationReason):
     policy: PolicyCandidate = Field(description="링크·마감일·자격은 이 DB 값만 믿는다")
 
 
+class RecommendationRequest(BaseModel):
+    """이미 보여 준 정책을 빼고 다음 장을 받을 때 쓴다. 생략·빈 목록이면 상위부터."""
+
+    exclude_plcy_nos: list[
+        Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+    ] = Field(
+        default_factory=list,
+        max_length=45,
+        description="이미 화면에 쌓인 policy.plcy_no. 최대 45개.",
+    )
+
+    @field_validator("exclude_plcy_nos")
+    @classmethod
+    def _dedupe_exclude(cls, values: list[str]) -> list[str]:
+        # 순서를 유지한 채 중복만 제거한다. 빈 문자열은 StringConstraints 가 막는다.
+        return list(dict.fromkeys(values))
+
+
 class RecommendationResponse(BaseModel):
     session_id: uuid.UUID
     as_of: date
     items: list[Recommendation] = Field(description="답을 반영한 최종 후보 상위 정책")
+    has_more: bool = Field(
+        description="후보 상위 50에서 exclude 를 뺀 뒤 6건 이상이면 true (더 보기 가능)"
+    )

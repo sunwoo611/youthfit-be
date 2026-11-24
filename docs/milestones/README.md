@@ -9,9 +9,9 @@
 | 3 | 10/6~10/12 | 1차 룰 기반 메타데이터 필터링 | [x] `POST /v1/candidates`, 대표 사용자 점검(`journal/2026-10-26-candidates-filter.md`) |
 | 4 | 10/13~10/19 | 역질문 프롬프트 1차, 정보 이득 기반 질문 3~5개 도출 | [x] 기대 제거율 변수 선정·템플릿 질문(`decisions/008`) + LLM 질문 문구화·템플릿 폴백(`decisions/012-llm-question-phrasing.md`) |
 | 5 | 10/20~10/26 | 역질문 JSON 스키마, 세션 상태 관리 | [x] `/v1/sessions` 생성·조회·답변, `sessions` 테이블, 대표 사용자 점검(`journal/2026-11-02-question-engine.md`) |
-| 6 | 10/27~11/2 | 역질문-답변 추론 엔진, RAG 근거 매칭, 중간보고 | [ ] |
+| 6 | 10/27~11/2 | 역질문-답변 추론 엔진, RAG 근거 매칭, 중간보고 | [x] 답변 재필터 추론 엔진(`decisions/008`), DB 메타 기반 근거 매칭(Vector DB 아님, `decisions/001`·`011`). 중간보고서만 별도 작성 |
 | 7 | 11/3~11/9 | ~~통합 패키지(지원금+적금) 매칭 로직~~ → 정책 심화: 적금 제외(`decisions/010-policy-only-scope.md`), 최종 후보 LLM 선정 사유(`decisions/011-llm-recommendation-reason.md`) | [x] 적금 제거·선정 사유 API·A~D 실측(`journal/2026-11-13-llm-reason.md`) |
-| 8 | 11/10~11/16 | 캐싱 계층, 프롬프트 경량화·비용 최적화 | [ ] |
+| 8 | 11/10~11/16 | 캐싱 계층, 프롬프트 경량화·비용 최적화 | [x] 캐싱은 일 배치 DB 미러 + 세션 JSONB 사유 캐시로 충족. 선정 사유 입력 토큰 -10.5%, 지연은 출력 지배라 변화 없음(`journal/2026-11-24-prompt-slimming.md`) |
 | 9 | 11/17~11/23 | FE-BE 통합, 클라우드 테스트 배포 | [~] 개발 서버 구성 선행(Render + Actions, `decisions/007-dev-deploy-render.md`) |
 | 10 | 11/24~11/30 | 알파 테스트(10~15명), 피드백 분석 | [ ] |
 | 11 | 12/1~12/7 | 매칭 오류 수정, 환각·링크 유효성 전수 점검 | [ ] |

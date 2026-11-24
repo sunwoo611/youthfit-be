@@ -104,7 +104,7 @@ sequenceDiagram
 | `app/services/question_engine.py` | 역질문 변수 레지스트리와 기대 제거율 점수, 템플릿 질문 생성, 답 반영. 시도 미입력이면 `sido` 질문을 맨 앞 고정 삽입 (DB·LLM 미사용, 근거: `decisions/008`, `013`) |
 | `app/services/question_phrasing.py` | 세션 생성 시 질문 `text`만 LLM 문구화. id 대조·URL/날짜 정리·템플릿 폴백. 후보·선택지는 프롬프트에 넣지 않음 (근거: `decisions/012`) |
 | `app/services/session_service.py` | 세션 생성(전체 후보로 질문 선정 → 연결 밖 문구화 → INSERT)·조회·답변(선택지 대조, `as_of` 기준 재조회, 덮어쓰기, 선정 사유 캐시 비우기·`answers_revision` 증가) |
-| `app/services/recommendation_service.py` | 최종 후보 상위 5건 선정 사유: 프롬프트 구성, LLM 출력 `plcy_no` 대조·URL/날짜 정리, SQL이 보장하는 자격만 쓰는 템플릿 사유, 세션 캐시(리비전 조건부 저장), `exclude`·`has_more`(상위 50 풀, exclude 시 부분 재사용·미저장), 읽기·LLM·쓰기 분리 (근거: `decisions/011`, `014`) |
+| `app/services/recommendation_service.py` | 최종 후보 상위 5건 선정 사유: 프롬프트 구성, LLM 출력 `plcy_no` 대조·URL/날짜 정리, SQL이 보장하는 자격만 쓰는 템플릿 사유, 세션 캐시(리비전 조건부 저장), `exclude`·`has_more`(상위 50 풀, exclude 시 부분 재사용·미저장), 읽기·LLM·쓰기 분리. 프롬프트 원문은 필드별 상한·설명 중복 제거·압축 JSON (근거: `decisions/011`, `014`, `015`) |
 | `app/llm/client.py` | `LlmClient` 프로토콜과 `OpenAIClient`(Pydantic 구조화 출력, 재시도 포함 전체 시간 한도, 모든 실패를 `LlmError`로 통일, 토큰·지연 로그). `OPENAI_BASE_URL`이 있으면 그 호스트(BAZE 등 OpenAI 호환 게이트웨이). 키가 없으면 `None` |
 | `app/services/query_hints.py` | 자연어 질의에서 지역·취업상태·나이·관심분야 규칙 사전 추출 (LLM 미사용) |
 | `app/core/config.py` | `pydantic-settings` 기반 설정 (CORS 허용 출처, `postgres://`·`sslmode` URL을 asyncpg 형식으로 변환) |
@@ -166,3 +166,4 @@ flowchart LR
 - 2026-11-16: 역질문 LLM 문구화(`decisions/012`). `question_phrasing`, 세션 생성 시 연결 밖 `text` 다듬기·템플릿 폴백, 변수·선택지는 서버 고정
 - 2026-11-20: 가짜 전국 필터·시도 고정 역질문(`decisions/013`, `journal/2026-11-20-fake-national-sido-question.md`). 기초지자체+전국 zip은 유효 전국에서 제외, 해당 시도만 `region_scope=sigungu`로 통과 (`region_scope.py`). 시도 없으면 세션 생성 시 `sido` 칩을 맨 앞 고정. 로컬 DB: 전국 zip 694건 중 가짜 전국 19건 제외
 - 2026-11-24: 추천 「더 보기」(`decisions/014`). `exclude_plcy_nos`·`has_more`, 상위 50 풀, exclude 시 부분 캐시 재사용·첫 장 캐시 미파괴
+- 2026-11-24: 선정 사유 프롬프트 경량화(`decisions/015`, `journal/2026-11-24-prompt-slimming.md`). 필드별 원문 상한·설명 중복 제거·압축 JSON으로 입력 토큰 -10.5%, 측정 스크립트 `scripts/measure_reason_prompt.py`

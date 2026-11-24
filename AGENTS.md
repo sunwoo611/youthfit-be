@@ -39,4 +39,5 @@ uv run ruff check .
 적금 제거 완료(2026-11-13): `docs/decisions/010-policy-only-scope.md`.
 가짜 전국 필터·시도 고정 역질문(2026-11-20): `docs/decisions/013-fake-national-and-sido-question.md`.
 테스트는 키 없이 가짜 LLM으로 돈다.
-다음: 프롬프트 경량화(8주차), FE 연동(9주차).
+프롬프트 경량화 완료(2026-11-24): 선정 사유 입력 토큰 -10.5%, 측정 `scripts/measure_reason_prompt.py`, `docs/decisions/015-reason-prompt-slimming.md`, `docs/journal/2026-11-24-prompt-slimming.md`.
+다음: FE 연동(9주차).

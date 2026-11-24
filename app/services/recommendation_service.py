@@ -142,9 +142,16 @@ class _Context:
 
 
 async def recommend(
-    connect: ConnectionFactory, llm: LlmClient | None, session_id: uuid.UUID
+    connect: ConnectionFactory,
+    llm: LlmClient | None,
+    session_id: uuid.UUID,
+    exclude_plcy_nos: Sequence[str] = (),
 ) -> RecommendationResponse:
-    """없거나 만료된 세션이면 SessionNotFoundError."""
+    """없거나 만료된 세션이면 SessionNotFoundError.
+
+    exclude_plcy_nos 필터·has_more 계산은 상위 50 조회 확장에서 채운다.
+    """
+    _ = exclude_plcy_nos
     async with connect() as conn:
         context = await _read(conn, session_id)
 
@@ -171,6 +178,7 @@ async def recommend(
             Recommendation(policy=target.card, **reason.model_dump(exclude={"plcy_no"}))
             for target, reason in zip(context.targets, reasons, strict=True)
         ],
+        has_more=False,
     )
 
 

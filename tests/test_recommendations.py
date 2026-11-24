@@ -301,12 +301,82 @@ def test_prompt_has_user_profile_and_policy_facts_but_no_links():
 
     prompt = svc.build_prompt(CONDITIONS, [target])
 
-    assert '"나이": "만 25세"' in prompt
-    assert '"취업 상태": "미취업자"' in prompt
-    assert '"plcy_no": "P1"' in prompt
+    assert '"나이":"만 25세"' in prompt
+    assert '"취업 상태":"미취업자"' in prompt
+    assert '"plcy_no":"P1"' in prompt
     assert "만 19~34세" in prompt
     assert "http" not in prompt
     assert "apply.example" not in prompt
+
+
+def _facts(target: Target) -> dict[str, Any]:
+    return json.loads(svc.build_prompt(CONDITIONS, [target]))["정책"][0]
+
+
+def test_prompt_policy_fact_keys_are_fixed():
+    target = _target(
+        "P1",
+        support_content="월 20만원 지원",
+        description="청년 월세 지원 사업",
+        extra_qualification="무주택자",
+        exclusion="기수급자",
+    )
+
+    assert list(_facts(target)) == [
+        "plcy_no", "정책명", "운영 기관", "분류", "지원 내용", "정책 설명", "나이", "지역",
+        "취업 상태", "혼인", "학력", "소득", "추가 자격", "제외 대상",
+    ]  # fmt: skip
+
+
+def test_prompt_omits_empty_fields_and_no_special_target_placeholder():
+    facts = _facts(_target("P1"))
+
+    assert "지원 내용" not in facts
+    assert "정책 설명" not in facts
+    assert "추가 자격" not in facts
+    assert "특화 대상" not in facts
+
+
+def test_prompt_truncates_long_texts_per_field():
+    long = "가" * 1000
+    facts = _facts(
+        _target("P1", support_content=long, description="나" * 1000, extra_qualification=long)
+    )
+
+    assert len(facts["지원 내용"]) <= svc.SUPPORT_MAX_CHARS
+    assert len(facts["정책 설명"]) <= svc.DESCRIPTION_MAX_CHARS
+    assert len(facts["추가 자격"]) <= svc.CONDITION_TEXT_MAX_CHARS
+
+
+def test_prompt_drops_description_repeating_support():
+    same = _facts(_target("P1", support_content="월 20만원을 12개월 지원", description="월 20만원"))
+    different = _facts(
+        _target("P1", support_content="월 20만원 지원", description="무주택 청년 대상")
+    )
+
+    assert "정책 설명" not in same
+    assert different["정책 설명"] == "무주택 청년 대상"
+
+
+def test_prompt_keeps_longer_description_sharing_support_prefix():
+    support = "청년 월세 지원금을 매월 20만원씩 지급"
+    facts = _facts(_target("P1", support_content=support, description=support + ", 무주택 요건"))
+
+    assert facts["정책 설명"] == support + ", 무주택 요건"
+
+
+def test_prompt_drops_description_contained_in_untruncated_support():
+    description = "가" * 250
+    support = description + "나" * 100
+    facts = _facts(_target("P1", support_content=support, description=description))
+
+    assert "정책 설명" not in facts
+
+
+def test_prompt_is_compact_json():
+    prompt = svc.build_prompt(CONDITIONS, [_target("P1")])
+
+    assert prompt == json.dumps(json.loads(prompt), ensure_ascii=False, separators=(",", ":"))
 
 
 # --- 캐시 ---
@@ -545,10 +615,7 @@ async def test_recommend_exclude_returns_next_page_without_overwriting_cache(
     )
     session_id = created.session_id
     llm = FakeLlm(
-        [
-            LlmReason(plcy_no=f"P-{i:02d}", reason=f"사유 {i}", check_points=[])
-            for i in range(12)
-        ]
+        [LlmReason(plcy_no=f"P-{i:02d}", reason=f"사유 {i}", check_points=[]) for i in range(12)]
     )
 
     first = await svc.recommend(_connect(db_conn), llm, session_id)
@@ -641,9 +708,7 @@ async def test_api_exclude_returns_next_page(client: AsyncClient, db_conn: Async
     assert first.status_code == 200, first.text
     first_nos = [item["policy"]["plcy_no"] for item in first.json()["items"]]
 
-    second = await client.post(
-        _recommend_url(session_id), json={"exclude_plcy_nos": first_nos}
-    )
+    second = await client.post(_recommend_url(session_id), json={"exclude_plcy_nos": first_nos})
     assert second.status_code == 200, second.text
     body = second.json()
     assert [item["policy"]["plcy_no"] for item in body["items"]] == ["P-5", "P-6"]

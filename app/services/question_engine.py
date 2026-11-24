@@ -140,9 +140,7 @@ VARIABLES: tuple[Variable, ...] = (
         answer=lambda value: {"sigungu_codes": sigungu.match_codes(value)},
     ),
 )
-REGISTRY: dict[QuestionVariable, Variable] = {
-    v.name: v for v in (*VARIABLES, SIDO_VARIABLE)
-}
+REGISTRY: dict[QuestionVariable, Variable] = {v.name: v for v in (*VARIABLES, SIDO_VARIABLE)}
 
 
 def removal_score(

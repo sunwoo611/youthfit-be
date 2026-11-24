@@ -444,9 +444,7 @@ async def test_fake_national_excluded_without_sido_and_other_sido(
         "TRUE-NATIONAL",
         "METRO-ZIP",
     }
-    assert "FAKE-UISEONG" not in await _policy_nos(
-        db_conn, CandidateRequest(sido_code="11")
-    )
+    assert "FAKE-UISEONG" not in await _policy_nos(db_conn, CandidateRequest(sido_code="11"))
 
 
 async def test_fake_national_kept_for_matching_sido_as_sigungu(

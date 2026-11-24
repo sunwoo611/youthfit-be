@@ -50,10 +50,11 @@ REASON_MAX_CHARS = 200
 CHECK_POINT_MAX_CHARS = 100
 MAX_CHECK_POINTS = 3
 # 정책 원문은 길이 편차가 커서 프롬프트에 넣기 전에 자른다. 사유는 지원 내용을 가장 많이 쓰고,
-# 추가 자격·제외 대상은 확인할 조건(최대 CHECK_POINT_MAX_CHARS 자)으로만 옮겨지므로 더 짧게 자른다.
+# 추가 자격·제외 대상은 대부분 비어 있어 절감 효과가 작고, 뒷부분의 제외 조건이 잘리면 사용자가
+# 확인할 조건을 놓치므로 기존 상한을 유지한다.
 SUPPORT_MAX_CHARS = 300
 DESCRIPTION_MAX_CHARS = 200
-CONDITION_TEXT_MAX_CHARS = 200
+CONDITION_TEXT_MAX_CHARS = 400
 
 SESSIONS = QuestionSession.__table__
 
@@ -460,12 +461,15 @@ def _income_certain(conditions: AppliedConditions, target: Target) -> bool:
     )
 
 
-def _description(raw: str | None, support: str) -> str:
-    """정책 설명. 지원 내용과 같은 말이 겹치면 토큰만 늘므로 뺀다."""
-    description = clean_text(raw, DESCRIPTION_MAX_CHARS)
-    if description and support and (description in support or description[:30] == support[:30]):
+def _description(raw: str | None, raw_support: str | None) -> str:
+    """정책 설명. 지원 내용에 통째로 들어 있으면 같은 말이 두 번 들어가므로 뺀다.
+
+    자르기 전 원문끼리 비교한다. 설명이 더 길거나 앞부분만 같으면 새 정보가 있으므로 남긴다.
+    """
+    full = clean_text(raw, len(raw or "") + 1)
+    if full and full in clean_text(raw_support, len(raw_support or "") + 1):
         return ""
-    return description
+    return clean_text(raw, DESCRIPTION_MAX_CHARS)
 
 
 def _policy_facts(conditions: AppliedConditions, target: Target) -> dict[str, Any]:
@@ -478,7 +482,7 @@ def _policy_facts(conditions: AppliedConditions, target: Target) -> dict[str, An
         "운영 기관": card.org_name,
         "분류": card.categories,
         "지원 내용": support,
-        "정책 설명": _description(text.get("description"), support),
+        "정책 설명": _description(text.get("description"), text.get("support_content")),
         "나이": _age_text(card) or "제한 없음",
         "지역": _region_text(card, conditions.sido_code),
         "취업 상태": ", ".join(card.eligibility.employment) or "제한 없음",

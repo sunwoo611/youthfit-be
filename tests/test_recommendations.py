@@ -358,11 +358,25 @@ def test_prompt_drops_description_repeating_support():
     assert different["정책 설명"] == "무주택 청년 대상"
 
 
+def test_prompt_keeps_longer_description_sharing_support_prefix():
+    support = "청년 월세 지원금을 매월 20만원씩 지급"
+    facts = _facts(_target("P1", support_content=support, description=support + ", 무주택 요건"))
+
+    assert facts["정책 설명"] == support + ", 무주택 요건"
+
+
+def test_prompt_drops_description_contained_in_untruncated_support():
+    description = "가" * 250
+    support = description + "나" * 100
+    facts = _facts(_target("P1", support_content=support, description=description))
+
+    assert "정책 설명" not in facts
+
+
 def test_prompt_is_compact_json():
     prompt = svc.build_prompt(CONDITIONS, [_target("P1")])
 
-    assert '": ' not in prompt
-    assert '", "' not in prompt
+    assert prompt == json.dumps(json.loads(prompt), ensure_ascii=False, separators=(",", ":"))
 
 
 # --- 캐시 ---

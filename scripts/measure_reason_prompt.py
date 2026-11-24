@@ -67,24 +67,34 @@ async def measure(repeat: int) -> None:
         for _ in range(repeat):
             created = await create_session(connect, None, SessionCreateRequest(**fields), today)
             before = len(meter.records)
-            response = await svc.recommend(connect, meter, created.session_id)
+            try:
+                response = await svc.recommend(connect, meter, created.session_id)
+            finally:
+                async with connect() as conn:
+                    await conn.execute(
+                        delete(QuestionSession.__table__).where(
+                            QuestionSession.__table__.c.id == created.session_id
+                        )
+                    )
+            if len(meter.records) == before:
+                print(f"{name}: LLM 호출 없음(후보 0건 등), 이 회차는 제외")
+                continue
             usage, chars = meter.records[before]
             fallback = sum(i.reason_source is ReasonSource.TEMPLATE for i in response.items)
             runs.append(
                 (usage.input_tokens, usage.output_tokens, usage.latency_ms, chars, fallback)
             )
-            async with connect() as conn:
-                await conn.execute(
-                    delete(QuestionSession.__table__).where(
-                        QuestionSession.__table__.c.id == created.session_id
-                    )
-                )
+        if not runs:
+            continue
         med = [statistics.median(col) for col in zip(*runs, strict=True)]
         rows.append((name, *med))
         print(
             f"{name}: 입력 {med[0]:.0f} / 출력 {med[1]:.0f} / 지연 {med[2]:.0f}ms / "
             f"프롬프트 {med[3]:.0f}자 / 템플릿 대체 {med[4]:.0f}/5  (n={repeat})"
         )
+    if not rows:
+        print("측정된 회차가 없음")
+        return
     print(
         json.dumps(
             {

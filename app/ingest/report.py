@@ -110,9 +110,7 @@ def is_weak_text(value: object) -> bool:
     return not text or INQUIRY_MARK in text
 
 
-def policy_groups(
-    sido_codes: list[str] | None, sigungu_codes: list[str] | None
-) -> tuple[str, ...]:
+def policy_groups(sido_codes: list[str] | None, sigungu_codes: list[str] | None) -> tuple[str, ...]:
     """한 정책이 집계되는 그룹. 전체는 항상 포함하고, 서울·경기와 지역 무관은 겹칠 수 있다."""
     sido = set(sido_codes or [])
     keys = [GROUP_ALL]

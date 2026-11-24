@@ -80,6 +80,7 @@ class FakeLlm:
             return LlmPhrasedQuestions(items=items), USAGE
         return LlmPhrasedQuestions(items=self.items), USAGE
 
+
 def test_build_prompt_omits_options_and_keeps_template_fields():
     questions = [
         _question("q1"),

@@ -33,9 +33,7 @@ def is_basic_local_org(org_name: str | None) -> bool:
     return _BASIC_LOCAL_ORG_RE.search(org_name) is not None
 
 
-def is_effective_national(
-    sigungu_codes: Sequence[str] | None, org_name: str | None
-) -> bool:
+def is_effective_national(sigungu_codes: Sequence[str] | None, org_name: str | None) -> bool:
     """유효 전국 = 전국 zip 이고 기초지자체 기관이 아님."""
     return is_national_zip(sigungu_codes) and not is_basic_local_org(org_name)
 

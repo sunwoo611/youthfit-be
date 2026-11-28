@@ -41,6 +41,7 @@ from app.schemas.candidates import (
 from app.services.policy_status import Availability
 from app.services.query_hints import extract_hints
 from app.services.region_scope import (
+    basic_local_org_expr,
     effective_national_expr,
     fake_national_expr,
     org_matches_sido_expr,
@@ -189,7 +190,8 @@ def region_rank_expr(sido_code: str | None) -> ColumnElement[int]:
 
     시도 전체 여부는 그 시도 시군구 코드를 SIDO_WIDE_MIN_RATIO 이상 포함하는지로 본다.
     시도의 시군구 수는 단일 시도 정책 중 최대 시군구 수로 구한다.
-    기초지자체 + 전국 zip(가짜 전국)은 national 이 아니라 sigungu 로 둔다.
+    지자체 기관 + 전국 zip(가짜 전국, ADR 013·016)은 national 이 아니다. 기초지자체는
+    sigungu, 내 시도 광역 기관은 sido 로 둔다.
     """
     if sido_code is None:
         return case((effective_national_expr(), REGION_NATIONAL), else_=REGION_SIGUNGU)
@@ -210,7 +212,12 @@ def region_rank_expr(sido_code: str | None) -> ColumnElement[int]:
     )
     return case(
         (effective_national_expr(), REGION_NATIONAL),
-        # 가짜 전국은 zip이 시도 시군구를 대부분 포함해도 시도 전체가 아니다.
+        # 가짜 전국(기초지자체)은 zip이 시도 시군구를 대부분 포함해도 시도 전체가 아니다.
+        # 단 광역(시도) 기관이 내 시도 사업이면 시도 전체로 본다 (ADR 016).
+        (
+            and_(fake_national_expr(), ~basic_local_org_expr(), org_matches_sido_expr(sido_code)),
+            REGION_SIDO,
+        ),
         (fake_national_expr(), REGION_SIGUNGU),
         (in_sido >= func.coalesce(sido_total, 0) * SIDO_WIDE_MIN_RATIO, REGION_SIDO),
         else_=REGION_SIGUNGU,
@@ -234,7 +241,7 @@ def _policy_filters(
             )
         )
     if conditions.sido_code is not None:
-        # 가짜 전국(전국 zip + 기초지자체)은 기관명에 해당 시도명이 있을 때만 통과.
+        # 가짜 전국(전국 zip + 기초·광역 지자체)은 기관명에 해당 시도명이 있을 때만 통과.
         sido = conditions.sido_code
         filters.append(
             and_(

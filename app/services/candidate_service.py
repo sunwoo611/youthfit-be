@@ -41,6 +41,7 @@ from app.schemas.candidates import (
 from app.services.policy_status import Availability
 from app.services.query_hints import extract_hints
 from app.services.region_scope import (
+    basic_local_org_expr,
     effective_national_expr,
     fake_national_expr,
     org_matches_sido_expr,
@@ -210,7 +211,12 @@ def region_rank_expr(sido_code: str | None) -> ColumnElement[int]:
     )
     return case(
         (effective_national_expr(), REGION_NATIONAL),
-        # 가짜 전국은 zip이 시도 시군구를 대부분 포함해도 시도 전체가 아니다.
+        # 가짜 전국(기초지자체)은 zip이 시도 시군구를 대부분 포함해도 시도 전체가 아니다.
+        # 단 광역(시도) 기관이 내 시도 사업이면 시도 전체로 본다 (ADR 016).
+        (
+            and_(fake_national_expr(), ~basic_local_org_expr(), org_matches_sido_expr(sido_code)),
+            REGION_SIDO,
+        ),
         (fake_national_expr(), REGION_SIGUNGU),
         (in_sido >= func.coalesce(sido_total, 0) * SIDO_WIDE_MIN_RATIO, REGION_SIDO),
         else_=REGION_SIGUNGU,

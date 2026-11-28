@@ -38,6 +38,7 @@ from app.services.region_scope import (
     is_basic_local_org,
     is_effective_national,
     is_fake_national,
+    is_metro_org,
     is_national_zip,
 )
 
@@ -152,7 +153,28 @@ def test_national_zip_and_effective_national_helpers():
     assert is_effective_national(NATIONAL, "고용노동부")
     assert not is_effective_national(NATIONAL, "경상북도 의성군 관광복지과")
     assert is_fake_national(NATIONAL, "경상북도 의성군 관광복지과")
-    assert not is_fake_national(NATIONAL, "경기도청")
+    # 광역 시도명 포함 기관도 가짜 전국 (ADR 016)
+    assert is_fake_national(NATIONAL, "대구광역시 청년여성교육국 청년정책과")
+    assert is_fake_national(NATIONAL, "경기도청")
+    assert is_fake_national(NATIONAL, "재단법인전북특별자치도평생교육장학진흥원")
+    assert not is_fake_national(NATIONAL, "국토교통부 주택토지실")
+    assert not is_fake_national(NATIONAL[:-1], "대구광역시")
+
+
+@pytest.mark.parametrize(
+    ("org_name", "expected"),
+    [
+        ("대구광역시 청년여성교육국", True),
+        ("전남광주통합특별시 광양시 미래산업국", True),
+        ("세종특별자치시", True),
+        ("고용노동부", False),
+        ("한국토지주택공사", False),
+        (None, False),
+        ("", False),
+    ],
+)
+def test_is_metro_org(org_name: str | None, expected: bool):
+    assert is_metro_org(org_name) is expected
 
 
 @pytest.mark.parametrize(
@@ -440,11 +462,28 @@ async def test_fake_national_excluded_without_sido_and_other_sido(
             org_name="경기도청",
         ),
     )
-    assert set(await _policy_nos(db_conn, CandidateRequest())) == {
-        "TRUE-NATIONAL",
-        "METRO-ZIP",
-    }
+    # 광역(경기도청)도 전국 zip 이어도 시도 없는 질의에서는 전국이 아니다 (ADR 016).
+    assert await _policy_nos(db_conn, CandidateRequest()) == ["TRUE-NATIONAL"]
     assert "FAKE-UISEONG" not in await _policy_nos(db_conn, CandidateRequest(sido_code="11"))
+    assert "METRO-ZIP" not in await _policy_nos(db_conn, CandidateRequest(sido_code="11"))
+
+
+async def test_metro_org_fake_national_only_for_own_sido(db_conn: AsyncConnection):
+    # 대구 기관이 낸 전국 zip 정책: 서울에선 제외, 대구에선 시도 범위로 노출.
+    await _insert_policies(
+        db_conn,
+        _policy(
+            "DAEGU-ZIP",
+            org_name="대구광역시 청년여성교육국 청년정책과",
+            sido_codes=["11", "27", "41"],
+            sigungu_codes=NATIONAL,
+        ),
+    )
+    assert await _policy_nos(db_conn, CandidateRequest()) == []
+    assert await _policy_nos(db_conn, CandidateRequest(sido_code="11")) == []
+    result = await find_candidates(db_conn, CandidateRequest(sido_code="27"), TODAY)
+    item = next(i for i in result.policies.items if i.plcy_no == "DAEGU-ZIP")
+    assert item.eligibility.region_scope == "sido"
 
 
 async def test_fake_national_kept_for_matching_sido_as_sigungu(

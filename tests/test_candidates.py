@@ -135,7 +135,12 @@ def test_question_conditions_default_to_unknown():
         ("의성군청", True),
         ("서울특별시 강남구청", True),
         ("수원시청 청년정책과", True),
+        ("서울특별시 은평구", True),
+        ("인천광역시 강화군", True),
+        ("전남광주통합특별시 광양시 미래산업국", True),
         ("경상북도 지방시대정책국 청년정책과", False),
+        ("대구광역시 청년여성교육국 청년정책과", False),
+        ("세종특별자치시", False),
         ("경기도청", False),
         ("고용노동부", False),
         ("테스트기관", False),
@@ -484,6 +489,22 @@ async def test_metro_org_fake_national_only_for_own_sido(db_conn: AsyncConnectio
     result = await find_candidates(db_conn, CandidateRequest(sido_code="27"), TODAY)
     item = next(i for i in result.policies.items if i.plcy_no == "DAEGU-ZIP")
     assert item.eligibility.region_scope == "sido"
+
+
+async def test_metro_sub_org_is_sigungu_not_sido(db_conn: AsyncConnection):
+    # 광역명 + 시·군·구 하위 조직은 내 시도여도 시도 전체가 아니라 sigungu 다.
+    await _insert_policies(
+        db_conn,
+        _policy(
+            "EUNPYEONG-ZIP",
+            org_name="서울특별시 은평구",
+            sido_codes=["11", "41"],
+            sigungu_codes=NATIONAL,
+        ),
+    )
+    result = await find_candidates(db_conn, CandidateRequest(sido_code="11"), TODAY)
+    item = next(i for i in result.policies.items if i.plcy_no == "EUNPYEONG-ZIP")
+    assert item.eligibility.region_scope == "sigungu"
 
 
 async def test_fake_national_kept_for_matching_sido_as_sigungu(

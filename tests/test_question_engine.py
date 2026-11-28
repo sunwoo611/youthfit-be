@@ -14,12 +14,14 @@ from app.services.candidate_service import (
     REGION_SIDO,
     REGION_SIGUNGU,
     SCHOOL_CODE,
+    is_family_only_name,
     policy_query,
 )
 from app.services.question_engine import (
     REGISTRY,
     SIDO_VARIABLE,
     VARIABLES,
+    _keeps_marriage,
     apply_answer,
     removal_score,
     select_questions,
@@ -413,3 +415,32 @@ async def test_combined_answers_match_all_python_keeps(db_conn: AsyncConnection)
             if all(REGISTRY[name].keeps(row, value) for name, value in answers)
         }
         assert sql == python, answers
+
+
+@pytest.mark.parametrize(
+    ("name", "family_only"),
+    [
+        ("신생아 특례 구입·전세대출", True),
+        ("청년 신혼부부 월세 지원", True),
+        ("청년부부 결혼축하금 지원", True),
+        ("신혼부부·청년 임차보증금 지원사업", False),
+        ("청년, 신혼부부 주택자금 대출이자 지원사업", False),
+        ("신혼부부 및 청년 공공임대주택 임대보증금 지원", False),
+        ("예비부부 건강검진 사업", False),
+        ("청년한부모 자녀양육비 지원", False),
+        ("청년 월세 지원", False),
+    ],
+)
+def test_is_family_only_name(name: str, family_only: bool):
+    assert is_family_only_name(name) is family_only
+
+
+def test_marriage_answer_single_drops_family_only_title():
+    keeps = _keeps_marriage
+    any_code = codes.MARRIAGE_ANY
+    assert not keeps(_row(marriage_code=any_code, name="신생아 특례 대출"), "single")
+    assert not keeps(_row(marriage_code=None, name="신혼부부 전세자금"), "single")
+    assert keeps(_row(marriage_code=SINGLE, name="신혼 체험"), "single")
+    assert keeps(_row(marriage_code=any_code, name="신혼부부·청년 보증금"), "single")
+    assert keeps(_row(marriage_code=any_code, name="신생아 특례 대출"), "married")
+    assert keeps(_row(marriage_code=any_code), "single")

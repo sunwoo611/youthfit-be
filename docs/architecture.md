@@ -35,7 +35,7 @@ flowchart LR
 ## 4단계 파이프라인
 
 1. 자연어 입력 → 지역·취업상태·관심분야 1차 키워드 추출
-2. 로컬 DB에서 정책 후보군 선별 (30 ~ 50). 시도 없으면 유효 전국만, 가짜 전국(기초지자체+전국 zip)은 제외 (근거: `decisions/013`)
+2. 로컬 DB에서 정책 후보군 선별 (30 ~ 50). 시도 없으면 유효 전국만, 가짜 전국(기초·광역 지자체 기관+전국 zip)은 제외 (근거: `decisions/013`, `016`)
 3. 후보군을 가르는 핵심 자격 변수 식별(서버가 기대 제거율로 선정) → 3~5개 역질문(JSON). 시도 미입력이면 `sido`를 맨 앞 고정. 변수·선택지는 서버 고정, `text`만 LLM이 다듬고 실패·키 없음이면 템플릿 유지 (근거: `decisions/008`, `012`, `013`)
 4. 답변으로 최종 후보 확정 → 상위 5건에 LLM이 DB 메타데이터 기반 선정 사유 서술. 공식 URL·마감일·자격 표시는 DB 카드로만 만들고, LLM 실패·키 없음이면 템플릿 사유. `exclude_plcy_nos`로 상위 50 안 다음 장·`has_more` (근거: `decisions/011`, `014`)
 
@@ -100,7 +100,7 @@ sequenceDiagram
 | `app/schemas/sessions.py` | 세션 요청·응답, 질문(`variable`, 선택지 `value`/`label`, `affected`)·답 모델, 선정 사유 요청(`RecommendationRequest.exclude_plcy_nos`)·응답(`Recommendation` + `has_more`)과 캐시 항목(`CachedReason`) |
 
 | `app/services/candidate_service.py` | 1차 룰 필터 SQL: 마감 제외·나이·시도·취업상태·관심분야 + 역질문 답(혼인·학력·소득·시군구), 정렬(상태 > 시도 전체·유효 전국·일부 시군구 > 마감 임박, 시군구를 알면 내 시군구 정책은 시도 전체와 같은 순위), 정책명 정규화 중복 제거, 공식 링크 선택. 행 조회(`fetch_policy_rows`, limit 없음 허용)와 응답 조립(`build_response`) 분리 (근거: `decisions/005`, `006`, `008`, `013`) |
-| `app/services/region_scope.py` | 전국 zip·기초지자체 기관명 판정. 유효 전국/가짜 전국 SQL·파이썬 헬퍼 (근거: `decisions/013`) |
+| `app/services/region_scope.py` | 전국 zip·기초지자체·광역 시도명 기관명 판정. 유효 전국/가짜 전국 SQL·파이썬 헬퍼 (근거: `decisions/013`, `016`) |
 | `app/services/question_engine.py` | 역질문 변수 레지스트리와 기대 제거율 점수, 템플릿 질문 생성, 답 반영. 시도 미입력이면 `sido` 질문을 맨 앞 고정 삽입 (DB·LLM 미사용, 근거: `decisions/008`, `013`) |
 | `app/services/question_phrasing.py` | 세션 생성 시 질문 `text`만 LLM 문구화. id 대조·URL/날짜 정리·템플릿 폴백. 후보·선택지는 프롬프트에 넣지 않음 (근거: `decisions/012`) |
 | `app/services/session_service.py` | 세션 생성(전체 후보로 질문 선정 → 연결 밖 문구화 → INSERT)·조회·답변(선택지 대조, `as_of` 기준 재조회, 덮어쓰기, 선정 사유 캐시 비우기·`answers_revision` 증가) |
@@ -167,3 +167,4 @@ flowchart LR
 - 2026-11-20: 가짜 전국 필터·시도 고정 역질문(`decisions/013`, `journal/2026-11-20-fake-national-sido-question.md`). 기초지자체+전국 zip은 유효 전국에서 제외, 해당 시도만 `region_scope=sigungu`로 통과 (`region_scope.py`). 시도 없으면 세션 생성 시 `sido` 칩을 맨 앞 고정. 로컬 DB: 전국 zip 694건 중 가짜 전국 19건 제외
 - 2026-11-24: 추천 「더 보기」(`decisions/014`). `exclude_plcy_nos`·`has_more`, 상위 50 풀, exclude 시 부분 캐시 재사용·첫 장 캐시 미파괴
 - 2026-11-24: 선정 사유 프롬프트 경량화(`decisions/015`, `journal/2026-11-24-prompt-slimming.md`). 필드별 원문 상한·설명 중복 제거·압축 JSON으로 입력 토큰 -10.5%, 측정 스크립트 `scripts/measure_reason_prompt.py`
+- 2026-11-28: 광역 기관 가짜 전국 확장(`decisions/016`, `journal/2026-11-28-metro-fake-national.md`). 기관명에 시도명이 있고 전국 zip이면 가짜 전국, 유효 전국 689 → 602건. 내 시도 광역 기관은 `region_scope=sido`

@@ -40,4 +40,5 @@ uv run ruff check .
 가짜 전국 필터·시도 고정 역질문(2026-11-20): `docs/decisions/013-fake-national-and-sido-question.md`.
 테스트는 키 없이 가짜 LLM으로 돈다.
 프롬프트 경량화 완료(2026-11-24): 선정 사유 입력 토큰 -10.5%, 측정 `scripts/measure_reason_prompt.py`, `docs/decisions/015-reason-prompt-slimming.md`, `docs/journal/2026-11-24-prompt-slimming.md`.
+광역 기관 가짜 전국 확장 완료(2026-11-28): 기관명에 시도명이 있으면 전국 zip이어도 지역 한정, `docs/decisions/016-metro-org-fake-national.md`.
 다음: FE 연동(9주차).

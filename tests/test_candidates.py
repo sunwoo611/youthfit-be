@@ -322,6 +322,30 @@ async def test_marriage_filter_keeps_unrestricted(db_conn: AsyncConnection):
     assert set(await _searched_nos(db_conn, married)) == {"M-NULL", "M-ANY", "M-MARRIED"}
 
 
+async def test_single_drops_family_only_titles(db_conn: AsyncConnection):
+    any_code = codes.MARRIAGE_ANY
+    await _insert_policies(
+        db_conn,
+        _policy("F-NEWBORN", name="신생아 특례 구입·전세대출", marriage_code=any_code),
+        _policy("F-NEWLYWED", name="신혼부부 전용 전세자금", marriage_code=any_code),
+        _policy("F-MIXED", name="신혼부부·청년 임차보증금 지원", marriage_code=any_code),
+        _policy("F-MODIFIER", name="청년 신혼부부 월세 지원", marriage_code=any_code),
+        _policy("F-NULL", name="신혼부부 전세자금", marriage_code=None),
+        _policy("F-SINGLE-PARENT", name="청년한부모 자녀양육비 지원", marriage_code=any_code),
+        _policy("F-PLAIN", name="청년 월세 지원", marriage_code=any_code),
+        _policy("F-SINGLE", name="신혼 체험 프로그램", marriage_code="0055002"),
+    )
+    single = _conditions(marriage=Marriage.SINGLE)
+    married = _conditions(marriage=Marriage.MARRIED)
+    assert set(await _searched_nos(db_conn, single)) == {
+        "F-MIXED",
+        "F-PLAIN",
+        "F-SINGLE",
+        "F-SINGLE-PARENT",
+    }
+    assert set(await _searched_nos(db_conn, married)) >= {"F-NEWBORN", "F-NEWLYWED"}
+
+
 async def test_school_filter_treats_etc_as_unrestricted(db_conn: AsyncConnection):
     await _insert_policies(
         db_conn,

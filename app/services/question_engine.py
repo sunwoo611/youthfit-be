@@ -20,6 +20,7 @@ from app.services.candidate_service import (
     REGION_NATIONAL,
     SCHOOL_CODE,
     SCHOOL_MATCH,
+    is_family_only_name,
 )
 
 Row = Mapping[str, Any]
@@ -49,7 +50,11 @@ class Variable:
 
 def _keeps_marriage(row: Row, value: str) -> bool:
     code = row["marriage_code"]
-    return code is None or code in (codes.MARRIAGE_ANY, MARRIAGE_CODE[Marriage(value)])
+    if code is not None and code not in (codes.MARRIAGE_ANY, MARRIAGE_CODE[Marriage(value)]):
+        return False
+    if Marriage(value) == Marriage.SINGLE and code != MARRIAGE_CODE[Marriage.SINGLE]:
+        return not is_family_only_name(row.get("name") or "")
+    return True
 
 
 def _keeps_school(row: Row, value: str) -> bool:

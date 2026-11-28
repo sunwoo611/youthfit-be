@@ -4,6 +4,7 @@
 공식 링크는 DB 값에서 정해진 순서로 고른다(ADR 005).
 """
 
+import re
 from collections.abc import Mapping, Sequence
 from datetime import date
 from typing import Any
@@ -65,6 +66,26 @@ MARRIAGE_CODE: dict[Marriage, str] = {
     Marriage.MARRIED: "0055001",
     Marriage.SINGLE: "0055002",
 }
+
+# 혼인 코드가 제한없음인데 제목이 기혼·출산·양육 가구 전용인 정책(예: 신생아 특례 대출).
+# 미혼 답변이면 지운다 (ADR 017). 아래는 미혼도 대상일 수 있어 남기는 제목이다.
+# - 청년과 신혼부부가 병기된 제목: "신혼부부·청년", "청년, 신혼부부", "신혼부부 및 청년"
+#   ("청년 신혼부부", "청년부부"는 청년이 기혼 가구를 꾸미는 말이라 병기가 아니다)
+# - 예비부부·예비 대상, 한부모(미혼 한부모 가능)
+FAMILY_ONLY_NAME = r"신생아|출산|신혼|임산부|임신|산모|다자녀|육아|영유아|양육|난임|부부"
+_JOINER = r"\s*(?:[·ㆍ･․,]|및)\s*"
+FAMILY_EXEMPT_NAME = (
+    r"예비|한부모"
+    rf"|청년{_JOINER}신혼"
+    rf"|신혼(?:\(예비\))?부부(?:{_JOINER}|\s+)청년"
+)
+_FAMILY_ONLY_RE = re.compile(FAMILY_ONLY_NAME)
+_FAMILY_EXEMPT_RE = re.compile(FAMILY_EXEMPT_NAME)
+
+
+def is_family_only_name(name: str) -> bool:
+    return bool(_FAMILY_ONLY_RE.search(name)) and not _FAMILY_EXEMPT_RE.search(name)
+
 
 SCHOOL_CODE: dict[School, str] = {
     School.BELOW_HIGH_SCHOOL: "0049001",
@@ -287,6 +308,14 @@ def _policy_filters(
                 Policy.marriage_code.in_([codes.MARRIAGE_ANY, MARRIAGE_CODE[conditions.marriage]]),
             )
         )
+        if conditions.marriage == Marriage.SINGLE:
+            filters.append(
+                or_(
+                    Policy.marriage_code == MARRIAGE_CODE[Marriage.SINGLE],
+                    Policy.name.op("!~")(FAMILY_ONLY_NAME),
+                    Policy.name.op("~")(FAMILY_EXEMPT_NAME),
+                )
+            )
     if conditions.school is not None:
         # 학력 8개를 전부 나열한 정책은 사용자 코드와 겹치므로 따로 처리하지 않는다.
         filters.append(
